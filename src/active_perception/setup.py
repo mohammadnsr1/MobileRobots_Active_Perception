@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'cylinder_finder = active_perception.cylinder_finder:main',
+            'pose_estimator = active_perception.pose_estimator:main',
         ],
     },
 )
