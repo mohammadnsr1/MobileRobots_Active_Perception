@@ -16,7 +16,7 @@ from std_msgs.msg import ColorRGBA
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 from visualization_msgs.msg import Marker
 
-from active_perception.msg import PoseEstimateSample
+from active_perception_interfaces.msg import PoseEstimateSample
 
 
 @dataclass

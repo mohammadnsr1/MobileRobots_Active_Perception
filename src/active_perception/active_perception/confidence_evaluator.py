@@ -8,8 +8,8 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from active_perception.msg import PoseEstimateSample
-from active_perception.srv import EvaluatePoseConfidence
+from active_perception_interfaces.msg import PoseEstimateSample
+from active_perception_interfaces.srv import EvaluatePoseConfidence
 
 
 class ConfidenceEvaluatorNode(Node):

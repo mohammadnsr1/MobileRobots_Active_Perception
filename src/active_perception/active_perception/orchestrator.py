@@ -11,8 +11,8 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
-from active_perception.msg import PoseEstimateSample
-from active_perception.srv import EvaluatePoseConfidence, PlanNBV
+from active_perception_interfaces.msg import PoseEstimateSample
+from active_perception_interfaces.srv import EvaluatePoseConfidence, PlanNBV
 
 
 class OrchestratorState(Enum):

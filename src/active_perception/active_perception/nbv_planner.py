@@ -14,7 +14,7 @@ from std_msgs.msg import ColorRGBA
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
-from active_perception.srv import PlanNBV
+from active_perception_interfaces.srv import PlanNBV
 
 
 class NBVPlannerNode(Node):
