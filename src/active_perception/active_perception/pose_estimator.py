@@ -42,7 +42,7 @@ class PoseEstimatorNode(Node):
         self.declare_parameter(
             "output_pose_topic", "/active_perception/target_pose"
         )
-        self.declare_parameter("base_frame", "base_link")
+        self.declare_parameter("base_frame", "oakd_rgb_camera_optical_frame")
         self.declare_parameter("anisotropy_threshold", 0.2)
         self.declare_parameter("min_points", 30)
         self.declare_parameter("broadcast_tf", True)
@@ -54,6 +54,11 @@ class PoseEstimatorNode(Node):
         )
         self.output_pose_topic = (
             self.get_parameter("output_pose_topic")
+            .get_parameter_value()
+            .string_value
+        )
+        self.output_sample_topic = (
+            self.get_parameter("output_sample_topic")
             .get_parameter_value()
             .string_value
         )
@@ -73,6 +78,9 @@ class PoseEstimatorNode(Node):
         )
 
         self.pose_pub = self.create_publisher(PoseStamped, self.output_pose_topic, 10)
+        self.sample_pub = self.create_publisher(
+            PoseEstimateSample, self.output_sample_topic, 10
+        )
         self.axes_pub = self.create_publisher(
             Marker, "/active_perception/target_axes", 10
         )
