@@ -1,4 +1,4 @@
-active_perception/PoseEstimateSample[] history
+active_perception_interfaces/PoseEstimateSample[] history
 float32 desired_confidence_threshold
 int32 min_history_length
 ---
