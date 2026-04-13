@@ -1,0 +1,13 @@
+geometry_msgs/PoseStamped target_pose
+geometry_msgs/PoseStamped robot_pose
+int32 num_candidates
+float32 radius
+float32 min_radius
+float32 max_radius
+bool use_adaptive_radius
+---
+bool success
+geometry_msgs/PoseStamped best_view
+geometry_msgs/PoseArray candidate_views
+int32 selected_index
+string diagnostic_message

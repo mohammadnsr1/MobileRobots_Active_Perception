@@ -1,0 +1,13 @@
+active_perception/PoseEstimateSample[] history
+float32 desired_confidence_threshold
+int32 min_history_length
+---
+bool success
+float32 confidence_score
+bool should_plan_nbv
+bool should_stop
+float32 position_variance
+float32 yaw_variance
+float32 mean_point_count
+float32 mean_anisotropy_ratio
+string diagnostic_message
