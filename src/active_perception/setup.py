@@ -18,8 +18,8 @@ setup(
     maintainer='mohammadnsr1',
     maintainer_email='nasrmohammad661@gmail.com',
     description=(
-        'ROS 2 active perception nodes for cylinder detection and target '
-        'estimation from point clouds.'
+        'ROS 2 active perception nodes for finding targets, estimating poses, '
+        'evaluating confidence, and proposing next-best views.'
     ),
     license='Apache-2.0',
     extras_require={
@@ -31,6 +31,10 @@ setup(
         'console_scripts': [
             'cylinder_finder = active_perception.cylinder_finder:main',
             'pose_estimator = active_perception.pose_estimator:main',
+            'box_finder = active_perception.box_finder:main',
+            'confidence_evaluator = active_perception.confidence_evaluator:main',
+            'nbv_planner = active_perception.nbv_planner:main',
+            'orchestrator = active_perception.orchestrator:main',
         ],
     },
 )
