@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import math
 from dataclasses import dataclass
 from typing import Tuple
@@ -13,6 +15,8 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import ColorRGBA
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 from visualization_msgs.msg import Marker
+
+from active_perception.msg import PoseEstimateSample
 
 
 @dataclass
@@ -41,6 +45,9 @@ class PoseEstimatorNode(Node):
         )
         self.declare_parameter(
             "output_pose_topic", "/active_perception/target_pose"
+        )
+        self.declare_parameter(
+            "output_sample_topic", "/active_perception/pose_estimate_sample"
         )
         self.declare_parameter("base_frame", "oakd_rgb_camera_optical_frame")
         self.declare_parameter("anisotropy_threshold", 0.2)
@@ -382,6 +389,27 @@ class PoseEstimatorNode(Node):
         transform_msg.transform.rotation.w = pose_msg.pose.orientation.w
         self.tf_broadcaster.sendTransform(transform_msg)
 
+    def publish_sample(
+        self, estimate: PoseEstimate, point_count: int, stamp
+    ) -> None:
+        sample_msg = PoseEstimateSample()
+        sample_msg.header.frame_id = self.base_frame
+        sample_msg.header.stamp = stamp
+        sample_msg.pose.position.x = float(estimate.centroid[0])
+        sample_msg.pose.position.y = float(estimate.centroid[1])
+        sample_msg.pose.position.z = float(estimate.centroid[2])
+
+        qx, qy, qz, qw = self.make_quaternion_from_yaw(estimate.yaw)
+        sample_msg.pose.orientation.x = qx
+        sample_msg.pose.orientation.y = qy
+        sample_msg.pose.orientation.z = qz
+        sample_msg.pose.orientation.w = qw
+
+        sample_msg.point_count = int(point_count)
+        sample_msg.anisotropy_ratio = float(estimate.anisotropy_ratio)
+        sample_msg.yaw_source = estimate.yaw_source
+        self.sample_pub.publish(sample_msg)
+
     def target_cloud_callback(self, cloud_msg: PointCloud2) -> None:
         try:
             points = self.pointcloud2_to_xyz_array(cloud_msg)
@@ -425,6 +453,7 @@ class PoseEstimatorNode(Node):
         )
 
         self.publish_pose(estimate, cloud_msg.header.stamp)
+        self.publish_sample(estimate, point_count, cloud_msg.header.stamp)
         self.publish_markers(estimate, cloud_msg.header.stamp)
 
 
