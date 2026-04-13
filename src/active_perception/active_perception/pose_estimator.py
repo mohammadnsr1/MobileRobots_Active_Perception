@@ -96,8 +96,13 @@ class PoseEstimatorNode(Node):
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.get_logger().info(
-            "Pose estimator ready: cloud='%s', pose='%s', base_frame='%s'"
-            % (self.target_cloud_topic, self.output_pose_topic, self.base_frame)
+            "Pose estimator ready: cloud='%s', pose='%s', sample='%s', base_frame='%s'"
+            % (
+                self.target_cloud_topic,
+                self.output_pose_topic,
+                self.output_sample_topic,
+                self.base_frame,
+            )
         )
 
     def pointcloud2_to_xyz_array(self, cloud_msg: PointCloud2) -> np.ndarray:
