@@ -167,16 +167,16 @@ class PoseEstimatorNode(Node):
         half_yaw = 0.5 * yaw
         return (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
 
-    def compute_pose_from_cloud(self, points_base: np.ndarray) -> PoseEstimate:
-        centroid = self.compute_centroid(points_base)
-        pca_result = self.compute_pca(points_base)
+    def compute_pose_from_cloud(self, points_target: np.ndarray) -> PoseEstimate:
+        centroid = self.compute_centroid(points_target)
+        pca_result = self.compute_pca(points_target)
 
-        centered_xy = points_base[:, :2] - centroid[:2]
-        if len(points_base) < 2:
+        centered_xy = points_target[:, :2] - centroid[:2]
+        if len(points_target) < 2:
             planar_covariance = np.zeros((2, 2), dtype=np.float64)
         else:
             planar_covariance = (centered_xy.T @ centered_xy) / max(
-                len(points_base) - 1, 1
+                len(points_target) - 1, 1
             )
 
         planar_eigenvalues, planar_eigenvectors = np.linalg.eigh(planar_covariance)
