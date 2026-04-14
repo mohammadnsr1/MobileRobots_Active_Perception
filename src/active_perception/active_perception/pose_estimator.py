@@ -49,7 +49,7 @@ class PoseEstimatorNode(Node):
         self.declare_parameter(
             "output_sample_topic", "/active_perception/pose_estimate_sample"
         )
-        self.declare_parameter("base_frame", "oakd_rgb_camera_optical_frame")
+        self.declare_parameter("target_frame", "odom")
         self.declare_parameter("anisotropy_threshold", 0.2)
         self.declare_parameter("min_points", 30)
         self.declare_parameter("broadcast_tf", True)
@@ -69,8 +69,8 @@ class PoseEstimatorNode(Node):
             .get_parameter_value()
             .string_value
         )
-        self.base_frame = (
-            self.get_parameter("base_frame").get_parameter_value().string_value
+        self.target_frame = (
+            self.get_parameter("target_frame").get_parameter_value().string_value
         )
         self.anisotropy_threshold = (
             self.get_parameter("anisotropy_threshold")
@@ -103,12 +103,12 @@ class PoseEstimatorNode(Node):
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.get_logger().info(
-            "Pose estimator ready: cloud='%s', pose='%s', sample='%s', base_frame='%s'"
+            "Pose estimator ready: cloud='%s', pose='%s', sample='%s', target_frame='%s'"
             % (
                 self.target_cloud_topic,
                 self.output_pose_topic,
                 self.output_sample_topic,
-                self.base_frame,
+                self.target_frame,
             )
         )
 
@@ -224,7 +224,7 @@ class PoseEstimatorNode(Node):
         self, estimate: PoseEstimate, stamp, axis_length: float = 0.15
     ) -> None:
         centroid_marker = Marker()
-        centroid_marker.header.frame_id = self.base_frame
+        centroid_marker.header.frame_id = self.target_frame
         centroid_marker.header.stamp = stamp
         centroid_marker.ns = "target_centroid"
         centroid_marker.id = 0
@@ -250,7 +250,7 @@ class PoseEstimatorNode(Node):
 
         origin = estimate.centroid
         axes_marker = Marker()
-        axes_marker.header.frame_id = self.base_frame
+        axes_marker.header.frame_id = self.target_frame
         axes_marker.header.stamp = stamp
         axes_marker.ns = "target_axes"
         axes_marker.id = 0
@@ -279,9 +279,9 @@ class PoseEstimatorNode(Node):
         self.axes_pub.publish(axes_marker)
 
     def lookup_cloud_transform(self, source_frame: str, stamp) -> TransformStamped:
-        if source_frame == self.base_frame:
+        if source_frame == self.target_frame:
             identity = TransformStamped()
-            identity.header.frame_id = self.base_frame
+            identity.header.frame_id = self.target_frame
             identity.header.stamp = stamp
             identity.child_frame_id = source_frame
             identity.transform.rotation.w = 1.0
@@ -292,7 +292,7 @@ class PoseEstimatorNode(Node):
 
         try:
             return self.tf_buffer.lookup_transform(
-                self.base_frame,
+                self.target_frame,
                 source_frame,
                 target_time,
                 timeout=timeout,
@@ -306,7 +306,7 @@ class PoseEstimatorNode(Node):
                 % str(exc)
             )
             return self.tf_buffer.lookup_transform(
-                self.base_frame,
+                self.target_frame,
                 source_frame,
                 Time(),
                 timeout=timeout,
@@ -360,7 +360,7 @@ class PoseEstimatorNode(Node):
 
     def publish_pose(self, estimate: PoseEstimate, stamp) -> None:
         pose_msg = PoseStamped()
-        pose_msg.header.frame_id = self.base_frame
+        pose_msg.header.frame_id = self.target_frame
         pose_msg.header.stamp = stamp
         pose_msg.pose.position.x = float(estimate.centroid[0])
         pose_msg.pose.position.y = float(estimate.centroid[1])
@@ -393,7 +393,7 @@ class PoseEstimatorNode(Node):
         self, estimate: PoseEstimate, point_count: int, stamp
     ) -> None:
         sample_msg = PoseEstimateSample()
-        sample_msg.header.frame_id = self.base_frame
+        sample_msg.header.frame_id = self.target_frame
         sample_msg.header.stamp = stamp
         sample_msg.pose.position.x = float(estimate.centroid[0])
         sample_msg.pose.position.y = float(estimate.centroid[1])
@@ -431,8 +431,8 @@ class PoseEstimatorNode(Node):
             transform = self.lookup_cloud_transform(
                 cloud_msg.header.frame_id, cloud_msg.header.stamp
             )
-            points_base = self.transform_points_to_base(points, transform)
-            estimate = self.compute_pose_from_cloud(points_base)
+            points_target = self.transform_points_to_base(points, transform)
+            estimate = self.compute_pose_from_cloud(points_target)
         except (TransformException, ValueError, np.linalg.LinAlgError) as exc:
             self.get_logger().warn("Pose estimation failed: %s" % str(exc))
             return
@@ -444,7 +444,7 @@ class PoseEstimatorNode(Node):
         self.get_logger().info(
             "Centroid in %s: %s | eigenvalues=%s | yaw_source=%s | anisotropy=%.3f"
             % (
-                self.base_frame,
+                self.target_frame,
                 centroid_str,
                 eigenvalues_str,
                 estimate.yaw_source,
