@@ -1,0 +1,23 @@
+orb_stereo_vo_node:
+  ros__parameters:
+    left_image_topic: /robot_10/oakd/left/image_raw
+    right_image_topic: /robot_10/oakd/right/image_raw
+    left_camera_info_topic: /robot_10/oakd/left/camera_info
+    right_camera_info_topic: /robot_10/oakd/right/camera_info
+    vo_odom_topic: /orb_slam/vo_odom
+    vo_path_topic: /orb_slam/vo_path
+    world_frame: odom
+    base_frame: base_link
+    wheel_odom_topic: /robot_10/odom
+    publish_vo_tf: false
+    require_base_tf: true
+    align_vo_to_odom_on_start: true
+    vocabulary_file: ""
+    settings_file: ""
+    orbslam_backend_library: ""
+    generated_settings_file: /tmp/orb_ekf_orbslam3_stereo.yaml
+    camera_fps: 30.0
+    sync_slop: 0.05
+    max_sync_delta_ms: 15.0
+    enable_sync_gate: true
+    use_rectification: true
