@@ -1,0 +1,92 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 016e743..4858637 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -12,11 +12,21 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O3")
+ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -march=native")
+ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native")
+ 
+-# Check C++11 or C++0x support
++# Use a modern C++ standard so current Pangolin headers compile cleanly.
+ include(CheckCXXCompilerFlag)
++CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
++CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
+ CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
+ CHECK_CXX_COMPILER_FLAG("-std=c++0x" COMPILER_SUPPORTS_CXX0X)
+-if(COMPILER_SUPPORTS_CXX11)
++if(COMPILER_SUPPORTS_CXX17)
++   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
++   add_definitions(-DCOMPILEDWITHC17)
++   message(STATUS "Using flag -std=c++17.")
++elseif(COMPILER_SUPPORTS_CXX14)
++   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
++   add_definitions(-DCOMPILEDWITHC14)
++   message(STATUS "Using flag -std=c++14.")
++elseif(COMPILER_SUPPORTS_CXX11)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    add_definitions(-DCOMPILEDWITHC11)
+    message(STATUS "Using flag -std=c++11.")
+diff --git a/include/LoopClosing.h b/include/LoopClosing.h
+index c9ccb26..7b6bfe0 100644
+--- a/include/LoopClosing.h
++++ b/include/LoopClosing.h
+@@ -223,7 +223,7 @@ protected:
+     bool mbFixScale;
+ 
+ 
+-    bool mnFullBAIdx;
++    int mnFullBAIdx;
+ 
+ 
+ 
+diff --git a/include/Settings.h b/include/Settings.h
+index beab7de..b40742a 100644
+--- a/include/Settings.h
++++ b/include/Settings.h
+@@ -69,7 +69,7 @@ namespace ORB_SLAM3 {
+         GeometricCamera* camera1() {return calibration1_;}
+         GeometricCamera* camera2() {return calibration2_;}
+         cv::Mat camera1DistortionCoef() {return cv::Mat(vPinHoleDistorsion1_.size(),1,CV_32F,vPinHoleDistorsion1_.data());}
+-        cv::Mat camera2DistortionCoef() {return cv::Mat(vPinHoleDistorsion2_.size(),1,CV_32F,vPinHoleDistorsion1_.data());}
++        cv::Mat camera2DistortionCoef() {return cv::Mat(vPinHoleDistorsion2_.size(),1,CV_32F,vPinHoleDistorsion2_.data());}
+ 
+         Sophus::SE3f Tlr() {return Tlr_;}
+         float bf() {return bf_;}
+diff --git a/src/Settings.cc b/src/Settings.cc
+index 93a50be..0b5cc00 100644
+--- a/src/Settings.cc
++++ b/src/Settings.cc
+@@ -125,7 +125,14 @@ namespace ORB_SLAM3 {
+     }
+ 
+     Settings::Settings(const std::string &configFile, const int& sensor) :
+-    bNeedToUndistort_(false), bNeedToRectify_(false), bNeedToResize1_(false), bNeedToResize2_(false) {
++    calibration1_(nullptr), calibration2_(nullptr), originalCalib1_(nullptr), originalCalib2_(nullptr),
++    fps_(0.0f), bRGB_(false), bNeedToUndistort_(false), bNeedToRectify_(false), bNeedToResize1_(false),
++    bNeedToResize2_(false), thDepth_(0.0f), bf_(0.0f), b_(0.0f), noiseGyro_(0.0f), noiseAcc_(0.0f),
++    gyroWalk_(0.0f), accWalk_(0.0f), imuFrequency_(0.0f), insertKFsWhenLost_(true), depthMapFactor_(0.0f),
++    nFeatures_(0), scaleFactor_(0.0f), nLevels_(0), initThFAST_(0), minThFAST_(0), keyFrameSize_(0.0f),
++    keyFrameLineWidth_(0.0f), graphLineWidth_(0.0f), pointSize_(0.0f), cameraSize_(0.0f),
++    cameraLineWidth_(0.0f), viewPointX_(0.0f), viewPointY_(0.0f), viewPointZ_(0.0f), viewPointF_(0.0f),
++    imageViewerScale_(1.0f), thFarPoints_(0.0f) {
+         sensor_ = sensor;
+ 
+         //Open settings file
+@@ -550,7 +557,8 @@ namespace ORB_SLAM3 {
+             output << " ]" << endl;
+         }
+ 
+-        if(settings.sensor_ == System::STEREO || settings.sensor_ == System::IMU_STEREO){
++        if((settings.sensor_ == System::STEREO || settings.sensor_ == System::IMU_STEREO) &&
++           settings.originalCalib2_ != nullptr){
+             output << "\t-Camera 2 parameters (";
+             if(settings.cameraType_ == Settings::PinHole || settings.cameraType_ ==  Settings::Rectified){
+                 output << "Pinhole";
+@@ -591,6 +599,7 @@ namespace ORB_SLAM3 {
+             output << " ]" << endl;
+ 
+             if((settings.sensor_ == System::STEREO || settings.sensor_ == System::IMU_STEREO) &&
++                settings.calibration2_ != nullptr &&
+                 settings.cameraType_ == Settings::KannalaBrandt){
+                 output << "\t-Camera 2 parameters after resize: [ ";
+                 for(size_t i = 0; i < settings.calibration2_->size(); i++){

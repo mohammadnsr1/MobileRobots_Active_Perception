@@ -21,6 +21,11 @@
   <depend>cv_bridge</depend>
   <depend>robot_localization</depend>
 
+  <!--
+    ORB-SLAM backend is consumed as `orbslam3_backend` (Python module / .so library),
+    loaded at runtime by orb_vo_node. It is not a standard ROS package dependency
+    resolved by rosdep in this repository setup.
+  -->
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
 
