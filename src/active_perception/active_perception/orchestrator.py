@@ -305,10 +305,7 @@ class ActivePerceptionOrchestrator(Node):
             'finish, then return to WAITING_FOR_POSE for the next observation.'
         )
 
-    # Later, when finder and pose_estimator become services, this node can move
-    # from passive topic subscriptions to explicit service calls per iteration.
-    # For now it stays compatible with the current topic-driven pipeline and only
-    # orchestrates the history-based confidence check and the NBV planner call.
+
 
 
 def main(args=None) -> None:
