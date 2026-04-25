@@ -21,14 +21,14 @@ class PipelineConfig:
 
     def __init__(self):
         # Topic settings
-        self.topic = '/oakd/points'
+        self.topic = '/robot_10/oakd/points'
 
         # Voxel Downsampling
         self.voxel_size = 0.02
 
         # Passthrough/Box Filter (Min/Max XYZ)
-        self.box_min = np.array([-0.6, -2.0, 0.2])
-        self.box_max = np.array([0.6, 1.0, 2.0])
+        self.box_min = np.array([-2.0, -2.0, 0.3])
+        self.box_max = np.array([2.0, 1.0, 5.0])
 
         # Plane RANSAC
         self.floor_dist = 0.02
@@ -43,7 +43,7 @@ class PipelineConfig:
 
         # Box fitting heuristics
         self.min_box_points = 80
-        self.box_axis_align_thresh = 0.6
+        self.box_axis_align_thresh = 0.85
         self.min_box_dimensions = np.array([0.05, 0.05, 0.05])
         self.max_box_dimensions = np.array([0.8, 0.8, 0.9])
         self.min_side_ratio = 0.2
@@ -414,15 +414,15 @@ class BoxProcessorNode(Node):
         self.cfg = PipelineConfig()
         self.pipeline = BoxPipeline(self.cfg)
 
-        self.pub_stage0 = self.create_publisher(PointCloud2, 'pipeline/stage0_box', 10)
+        self.pub_stage0 = self.create_publisher(PointCloud2, '/robot_10/active_perception/stage0_box', 10)
         self.pub_stage3 = self.create_publisher(
-            PointCloud2, 'pipeline/stage3_candidates', 10
+            PointCloud2, '/robot_10/active_perception/stage3_candidates', 10
         )
         self.pub_target_cloud = self.create_publisher(
-            PointCloud2, '/active_perception/target_cloud', 10
+            PointCloud2, '/robot_10/active_perception/target_cloud', 10
         )
 
-        marker_pub = self.create_publisher(MarkerArray, 'viz/detections', 10)
+        marker_pub = self.create_publisher(MarkerArray, '/robot_10/viz/detections', 10)
         self.visualizer = BoxVisualizer(marker_pub)
 
         self.sub = self.create_subscription(

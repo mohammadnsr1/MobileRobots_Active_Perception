@@ -41,13 +41,13 @@ class PoseEstimatorNode(Node):
         super().__init__("pose_estimator")
 
         self.declare_parameter(
-            "target_cloud_topic", "/active_perception/target_cloud"
+            "target_cloud_topic", "/robot_10/active_perception/target_cloud"
         )
         self.declare_parameter(
-            "output_pose_topic", "/active_perception/target_pose"
+            "output_pose_topic", "/robot_10/active_perception/target_pose"
         )
         self.declare_parameter(
-            "output_sample_topic", "/active_perception/pose_estimate_sample"
+            "output_sample_topic", "/robot_10/active_perception/pose_estimate_sample"
         )
         self.declare_parameter("target_frame", "odom")
         self.declare_parameter("anisotropy_threshold", 0.2)
@@ -89,10 +89,10 @@ class PoseEstimatorNode(Node):
             PoseEstimateSample, self.output_sample_topic, 10
         )
         self.axes_pub = self.create_publisher(
-            Marker, "/active_perception/target_axes", 10
+            Marker, "/robot_10/active_perception/target_axes", 10
         )
         self.centroid_pub = self.create_publisher(
-            Marker, "/active_perception/target_centroid", 10
+            Marker, "/robot_10/active_perception/target_centroid", 10
         )
         self.cloud_sub = self.create_subscription(
             PointCloud2, self.target_cloud_topic, self.target_cloud_callback, 10

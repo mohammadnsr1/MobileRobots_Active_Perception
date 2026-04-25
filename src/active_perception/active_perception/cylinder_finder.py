@@ -24,7 +24,7 @@ class PipelineConfig:
 
     def __init__(self):
         # Topic settings
-        self.topic = '/oakd/points'
+        self.topic = '/robot_10/oakd/points'
 
         # Voxel Downsampling
         self.voxel_size = 0.02
