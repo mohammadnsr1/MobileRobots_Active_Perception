@@ -167,17 +167,76 @@ class PoseEstimatorNode(Node):
         half_yaw = 0.5 * yaw
         return (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
 
-    def compute_pose_from_cloud(self, points_target: np.ndarray) -> PoseEstimate:
-        centroid = self.compute_centroid(points_target)
-        pca_result = self.compute_pca(points_target)
+    def rotate_vector(self, vector: np.ndarray, transform: TransformStamped) -> np.ndarray:
+        rotation = transform.transform.rotation
+        qx = float(rotation.x)
+        qy = float(rotation.y)
+        qz = float(rotation.z)
+        qw = float(rotation.w)
 
-        centered_xy = points_target[:, :2] - centroid[:2]
-        if len(points_target) < 2:
-            planar_covariance = np.zeros((2, 2), dtype=np.float64)
-        else:
-            planar_covariance = (centered_xy.T @ centered_xy) / max(
-                len(points_target) - 1, 1
-            )
+        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if norm <= 1e-12:
+            raise ValueError("Transform quaternion has zero norm")
+
+        qx /= norm
+        qy /= norm
+        qz /= norm
+        qw /= norm
+
+        rotation_matrix = np.array(
+            [
+                [
+                    1.0 - 2.0 * (qy * qy + qz * qz),
+                    2.0 * (qx * qy - qz * qw),
+                    2.0 * (qx * qz + qy * qw),
+                ],
+                [
+                    2.0 * (qx * qy + qz * qw),
+                    1.0 - 2.0 * (qx * qx + qz * qz),
+                    2.0 * (qy * qz - qx * qw),
+                ],
+                [
+                    2.0 * (qx * qz - qy * qw),
+                    2.0 * (qy * qz + qx * qw),
+                    1.0 - 2.0 * (qx * qx + qy * qy),
+                ],
+            ],
+            dtype=np.float64,
+        )
+        return rotation_matrix @ vector
+
+    def compute_major_axis_from_cloud(
+        self, points: np.ndarray, vertical_hint: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, PcaResult, float]:
+        centroid = self.compute_centroid(points)
+        pca_result = self.compute_pca(points)
+
+        vertical_norm = np.linalg.norm(vertical_hint)
+        if vertical_norm <= 1e-12:
+            raise ValueError("Vertical hint has zero norm")
+        vertical_axis = vertical_hint / vertical_norm
+
+        reference_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(reference_axis, vertical_axis)) > 0.9:
+            reference_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+        plane_x = reference_axis - vertical_axis * np.dot(reference_axis, vertical_axis)
+        plane_x_norm = np.linalg.norm(plane_x)
+        if plane_x_norm <= 1e-12:
+            raise ValueError("Failed to build horizontal basis from vertical hint")
+        plane_x = plane_x / plane_x_norm
+
+        plane_y = np.cross(vertical_axis, plane_x)
+        plane_y_norm = np.linalg.norm(plane_y)
+        if plane_y_norm <= 1e-12:
+            raise ValueError("Failed to build orthogonal horizontal basis")
+        plane_y = plane_y / plane_y_norm
+
+        centered = points - centroid
+        footprint_2d = np.column_stack((centered @ plane_x, centered @ plane_y))
+        planar_covariance = (footprint_2d.T @ footprint_2d) / max(
+            len(points) - 1, 1
+        )
 
         planar_eigenvalues, planar_eigenvectors = np.linalg.eigh(planar_covariance)
         planar_order = np.argsort(planar_eigenvalues)[::-1]
@@ -188,33 +247,53 @@ class PoseEstimatorNode(Node):
         lambda2 = float(planar_eigenvalues[1]) if len(planar_eigenvalues) > 1 else 0.0
         anisotropy_ratio = (lambda1 - lambda2) / (lambda1 + 1e-9)
 
-        yaw_fallback = math.atan2(float(centroid[1]), float(centroid[0]))
-        use_pca_yaw = (
-            anisotropy_ratio > self.anisotropy_threshold and lambda1 > 1e-9
+        major_coeffs = planar_eigenvectors[:, 0]
+        major_axis = plane_x * major_coeffs[0] + plane_y * major_coeffs[1]
+        major_norm = np.linalg.norm(major_axis)
+        if major_norm <= 1e-12:
+            raise ValueError("Failed to recover major axis from planar PCA")
+        major_axis = major_axis / major_norm
+
+        return centroid, major_axis, pca_result, anisotropy_ratio
+
+    def compute_pose_from_cloud(
+        self, points: np.ndarray, transform: TransformStamped
+    ) -> PoseEstimate:
+        centroid_source, major_axis_source, pca_result, anisotropy_ratio = (
+            self.compute_major_axis_from_cloud(points, self.target_normal)
         )
 
-        if use_pca_yaw:
-            major_axis_xy = planar_eigenvectors[:, 0]
-            if np.linalg.norm(major_axis_xy) < 1e-9:
-                yaw = yaw_fallback
-                yaw_source = "centroid-bearing"
-            else:
-                bearing_xy = centroid[:2]
-                if np.linalg.norm(bearing_xy) > 1e-9 and np.dot(
-                    major_axis_xy, bearing_xy
-                ) < 0.0:
-                    major_axis_xy = -major_axis_xy
+        centroid = self.transform_points_to_base(
+            centroid_source.reshape(1, 3), transform
+        )[0]
+        major_axis_target = self.rotate_vector(major_axis_source, transform)
+        major_axis_target_xy = major_axis_target[:2]
+        major_axis_target_xy_norm = np.linalg.norm(major_axis_target_xy)
+        if major_axis_target_xy_norm <= 1e-9:
+            raise ValueError("Major axis projection onto odom XY plane is degenerate")
+        major_axis_target_xy = major_axis_target_xy / major_axis_target_xy_norm
 
-                yaw = math.atan2(float(major_axis_xy[1]), float(major_axis_xy[0]))
-                yaw_source = "pca"
-        else:
-            yaw = yaw_fallback
-            yaw_source = "centroid-bearing"
+        bearing_xy = centroid[:2]
+        if (
+            np.linalg.norm(bearing_xy) > 1e-9
+            and np.dot(major_axis_target_xy, bearing_xy) < 0.0
+        ):
+            major_axis_target_xy = -major_axis_target_xy
+
+        yaw = math.atan2(
+            float(major_axis_target_xy[1]), float(major_axis_target_xy[0])
+        )
+        yaw_source = (
+            "camera_vertical_pca"
+            if anisotropy_ratio > self.anisotropy_threshold
+            else "camera_vertical_pca_low_anisotropy"
+        )
 
         return PoseEstimate(
             centroid=centroid,
             eigenvalues=pca_result.eigenvalues,
             eigenvectors=pca_result.eigenvectors,
+            major_axis=major_axis_target,
             yaw=yaw,
             yaw_source=yaw_source,
             anisotropy_ratio=anisotropy_ratio,
