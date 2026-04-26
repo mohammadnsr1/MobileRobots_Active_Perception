@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import math
-from typing import Iterable, Tuple
+from typing import Iterable
 
 import numpy as np
 
@@ -15,7 +15,7 @@ from active_perception_interfaces.srv import EvaluatePoseConfidence
 class ConfidenceEvaluatorNode(Node):
     POSITION_VARIANCE_NORM = 0.01
     YAW_VARIANCE_NORM = 0.08
-    POINT_COUNT_NORM = 200.0
+    POINT_COUNT_NORM = 1.0
     ANISOTROPY_NORM = 0.5
 
     def __init__(self) -> None:

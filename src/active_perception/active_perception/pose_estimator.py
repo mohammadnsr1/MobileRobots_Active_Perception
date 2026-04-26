@@ -31,6 +31,7 @@ class PoseEstimate:
     centroid: np.ndarray
     eigenvalues: np.ndarray
     eigenvectors: np.ndarray
+    major_axis: np.ndarray
     yaw: float
     yaw_source: str
     anisotropy_ratio: float
@@ -50,6 +51,7 @@ class PoseEstimatorNode(Node):
             "output_sample_topic", "/robot_10/active_perception/pose_estimate_sample"
         )
         self.declare_parameter("target_frame", "odom")
+        self.declare_parameter("target_normal", [0.0, 1.0, 0.0])
         self.declare_parameter("anisotropy_threshold", 0.2)
         self.declare_parameter("min_points", 30)
         self.declare_parameter("broadcast_tf", True)
@@ -71,6 +73,12 @@ class PoseEstimatorNode(Node):
         )
         self.target_frame = (
             self.get_parameter("target_frame").get_parameter_value().string_value
+        )
+        self.target_normal = np.array(
+            self.get_parameter("target_normal")
+            .get_parameter_value()
+            .double_array_value,
+            dtype=np.float64,
         )
         self.anisotropy_threshold = (
             self.get_parameter("anisotropy_threshold")
@@ -510,8 +518,7 @@ class PoseEstimatorNode(Node):
             transform = self.lookup_cloud_transform(
                 cloud_msg.header.frame_id, cloud_msg.header.stamp
             )
-            points_target = self.transform_points_to_base(points, transform)
-            estimate = self.compute_pose_from_cloud(points_target)
+            estimate = self.compute_pose_from_cloud(points, transform)
         except (TransformException, ValueError, np.linalg.LinAlgError) as exc:
             self.get_logger().warn("Pose estimation failed: %s" % str(exc))
             return
