@@ -24,11 +24,11 @@ class PipelineConfig:
         self.topic = '/robot_10/oakd/points'
 
         # Voxel Downsampling
-        self.voxel_size = 0.02
+        self.voxel_size = 0.01
 
         # Passthrough/Box Filter (Min/Max XYZ)
-        self.box_min = np.array([-2.0, -2.0, 0.3])
-        self.box_max = np.array([2.0, 1.0, 5.0])
+        self.box_min = np.array([-1.5, -3.0, 0.2])
+        self.box_max = np.array([1.5, 1.0, 4.0])
 
         # Plane RANSAC
         self.floor_dist = 0.02
@@ -38,16 +38,24 @@ class PipelineConfig:
         # Euclidean clustering
         self.cluster_k = 15
         self.cluster_tolerance = 0.06
-        self.min_cluster_size = 100
-        self.max_cluster_size = 1500
+        self.min_cluster_size = 400
+        self.max_cluster_size = 5000
 
         # Box fitting heuristics
         self.min_box_points = 80
-        self.box_axis_align_thresh = 0.85
+        self.box_axis_align_thresh = 0.6
         self.min_box_dimensions = np.array([0.05, 0.05, 0.05])
-        self.max_box_dimensions = np.array([0.8, 0.8, 0.9])
-        self.min_side_ratio = 0.2
-        self.min_extent_ratio = 0.12
+        self.max_box_dimensions = np.array([0.6, 0.6, 0.6])
+
+        # Color filtering for brown cardboard-like boxes
+        self.brown_hue_min = 0.04
+        self.brown_hue_max = 0.13
+        self.brown_saturation_min = 0.2
+        self.brown_saturation_max = 0.8
+        self.brown_value_min = 0.15
+        self.brown_value_max = 0.95
+        self.brown_rg_min = 0.03
+        self.brown_gb_min = 0.015
 
 
 @dataclass
@@ -222,6 +230,59 @@ class BoxPipeline:
         unique_indices.sort()
         return pts[unique_indices], colors[unique_indices]
 
+    def color_filter(self, pts, colors):
+        """
+        Keeps only points whose RGB appearance is consistent with a brown box.
+        """
+        if len(pts) == 0:
+            return pts, colors
+
+        colors = np.asarray(colors, dtype=np.float32)
+        if colors.shape[1] != 3:
+            return pts, colors
+
+        rgb_max = np.max(colors, axis=1)
+        rgb_min = np.min(colors, axis=1)
+        chroma = rgb_max - rgb_min
+
+        hue = np.zeros(len(colors), dtype=np.float32)
+        nonzero = chroma > 1e-6
+
+        red_is_max = nonzero & (rgb_max == colors[:, 0])
+        green_is_max = nonzero & (rgb_max == colors[:, 1])
+        blue_is_max = nonzero & (rgb_max == colors[:, 2])
+
+        hue[red_is_max] = (
+            ((colors[red_is_max, 1] - colors[red_is_max, 2]) / chroma[red_is_max])
+            % 6.0
+        ) / 6.0
+        hue[green_is_max] = (
+            ((colors[green_is_max, 2] - colors[green_is_max, 0]) / chroma[green_is_max])
+            + 2.0
+        ) / 6.0
+        hue[blue_is_max] = (
+            ((colors[blue_is_max, 0] - colors[blue_is_max, 1]) / chroma[blue_is_max])
+            + 4.0
+        ) / 6.0
+
+        saturation = np.zeros(len(colors), dtype=np.float32)
+        value_nonzero = rgb_max > 1e-6
+        saturation[value_nonzero] = chroma[value_nonzero] / rgb_max[value_nonzero]
+        value = rgb_max
+
+        brown_mask = (
+            (hue >= self.cfg.brown_hue_min)
+            & (hue <= self.cfg.brown_hue_max)
+            & (saturation >= self.cfg.brown_saturation_min)
+            & (saturation <= self.cfg.brown_saturation_max)
+            & (value >= self.cfg.brown_value_min)
+            & (value <= self.cfg.brown_value_max)
+            & ((colors[:, 0] - colors[:, 1]) >= self.cfg.brown_rg_min)
+            & ((colors[:, 1] - colors[:, 2]) >= self.cfg.brown_gb_min)
+        )
+
+        return pts[brown_mask], colors[brown_mask]
+
     def find_plane_ransac(self, pts, iters=100):
         """
         Fits a plane model (ax + by + cz + d = 0) to the cloud using RANSAC.
@@ -268,19 +329,10 @@ class BoxPipeline:
 
     def fit_box(self, pts):
         """
-        Estimates an oriented 3D bounding box using PCA and simple extent checks.
+        Estimates an upright box from a top-down footprint and vertical extent.
         """
         if len(pts) < 3:
             return None
-
-        centroid = np.mean(pts, axis=0)
-        centered = pts - centroid
-        covariance = (centered.T @ centered) / max(len(pts) - 1, 1)
-
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-        order = np.argsort(eigenvalues)[::-1]
-        eigenvalues = eigenvalues[order]
-        eigenvectors = eigenvectors[:, order]
 
         vertical = np.asarray(self.cfg.target_normal, dtype=np.float64)
         vertical_norm = np.linalg.norm(vertical)
@@ -288,48 +340,78 @@ class BoxPipeline:
             return None
         vertical = vertical / vertical_norm
 
-        alignments = np.abs(eigenvectors.T @ vertical)
-        vertical_idx = int(np.argmax(alignments))
-        vertical_alignment = float(alignments[vertical_idx])
-        if vertical_alignment < self.cfg.box_axis_align_thresh:
+        reference_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(reference_axis, vertical)) > 0.9:
+            reference_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+        plane_x = reference_axis - vertical * np.dot(reference_axis, vertical)
+        plane_x_norm = np.linalg.norm(plane_x)
+        if plane_x_norm <= 1e-12:
+            return None
+        plane_x = plane_x / plane_x_norm
+
+        plane_y = np.cross(vertical, plane_x)
+        plane_y_norm = np.linalg.norm(plane_y)
+        if plane_y_norm <= 1e-12:
+            return None
+        plane_y = plane_y / plane_y_norm
+
+        centroid = np.mean(pts, axis=0)
+        centered = pts - centroid
+        footprint_2d = np.column_stack((centered @ plane_x, centered @ plane_y))
+        if len(footprint_2d) < 2:
             return None
 
-        vertical_axis = eigenvectors[:, vertical_idx]
-        if np.dot(vertical_axis, vertical) < 0.0:
-            vertical_axis = -vertical_axis
+        covariance_2d = (footprint_2d.T @ footprint_2d) / max(len(footprint_2d) - 1, 1)
+        eigenvalues_2d, eigenvectors_2d = np.linalg.eigh(covariance_2d)
+        order_2d = np.argsort(eigenvalues_2d)[::-1]
+        eigenvectors_2d = eigenvectors_2d[:, order_2d]
 
-        horizontal_indices = [idx for idx in range(3) if idx != vertical_idx]
-        if len(horizontal_indices) != 2:
-            return None
-
-        first_idx, second_idx = horizontal_indices
-        major_idx = first_idx if eigenvalues[first_idx] >= eigenvalues[second_idx] else second_idx
-        other_idx = second_idx if major_idx == first_idx else first_idx
-
-        major_axis = eigenvectors[:, major_idx]
-        major_axis = major_axis - vertical_axis * np.dot(major_axis, vertical_axis)
+        major_coeffs = eigenvectors_2d[:, 0]
+        major_axis = plane_x * major_coeffs[0] + plane_y * major_coeffs[1]
         major_norm = np.linalg.norm(major_axis)
         if major_norm <= 1e-12:
             return None
         major_axis = major_axis / major_norm
 
+        vertical_axis = vertical
         minor_axis = np.cross(vertical_axis, major_axis)
         minor_norm = np.linalg.norm(minor_axis)
         if minor_norm <= 1e-12:
             return None
         minor_axis = minor_axis / minor_norm
 
-        if np.dot(minor_axis, eigenvectors[:, other_idx]) < 0.0:
-            minor_axis = -minor_axis
-
         major_axis = np.cross(minor_axis, vertical_axis)
-        major_axis = major_axis / max(np.linalg.norm(major_axis), 1e-12)
+        major_norm = np.linalg.norm(major_axis)
+        if major_norm <= 1e-12:
+            return None
+        major_axis = major_axis / major_norm
 
         rotation_matrix = np.column_stack((major_axis, minor_axis, vertical_axis))
         local_points = centered @ rotation_matrix
 
-        local_min = np.min(local_points, axis=0)
-        local_max = np.max(local_points, axis=0)
+        local_min = np.percentile(local_points, 2.0, axis=0)
+        local_max = np.percentile(local_points, 98.0, axis=0)
+        dimensions = local_max - local_min
+
+        if np.any(dimensions < self.cfg.min_box_dimensions):
+            return None
+        if np.any(dimensions > self.cfg.max_box_dimensions):
+            return None
+
+        padding = max(0.01, 0.5 * float(self.cfg.voxel_size))
+        inlier_mask = np.all(
+            (local_points >= (local_min - padding))
+            & (local_points <= (local_max + padding)),
+            axis=1,
+        )
+        if np.count_nonzero(inlier_mask) < 3:
+            return None
+
+        box_local_points = local_points[inlier_mask]
+
+        local_min = np.min(box_local_points, axis=0)
+        local_max = np.max(box_local_points, axis=0)
         dimensions = local_max - local_min
         local_center = 0.5 * (local_min + local_max)
         center = centroid + rotation_matrix @ local_center
@@ -340,20 +422,15 @@ class BoxPipeline:
             return None
 
         horizontal_dims = dimensions[:2]
-        largest_dim = float(np.max(dimensions))
-        smallest_dim = float(np.min(dimensions))
         largest_horizontal = float(np.max(horizontal_dims))
         smallest_horizontal = float(np.min(horizontal_dims))
 
+        # Keep the ratio only as a soft preference so partial views of the box
+        # are not rejected outright when the observed extents are imbalanced.
         side_ratio = smallest_horizontal / max(largest_horizontal, 1e-9)
-        extent_ratio = smallest_dim / max(largest_dim, 1e-9)
-        if side_ratio < self.cfg.min_side_ratio:
-            return None
-        if extent_ratio < self.cfg.min_extent_ratio:
-            return None
 
-        score = float(len(pts)) * float(0.5 + 0.5 * side_ratio)
-        return center, rotation_matrix, dimensions, score
+        score = float(np.count_nonzero(inlier_mask)) * float(0.5 + 0.5 * side_ratio)
+        return center, rotation_matrix, dimensions, score, inlier_mask
 
     def euclidean_clustering(self, pts):
         """
@@ -525,21 +602,30 @@ class BoxProcessorNode(Node):
             )
             return None
 
-        center, rotation_matrix, dimensions, score = box_fit
-        display_color = self.average_display_color(cluster_colors)
+        center, rotation_matrix, dimensions, score, inlier_mask = box_fit
+        box_pts = cluster_pts[inlier_mask]
+        box_colors = cluster_colors[inlier_mask]
+        if len(box_pts) < max(30, self.cfg.min_box_points // 2):
+            self.get_logger().info(
+                f'Cluster {cluster_idx}: rejected, refined box subset too small'
+            )
+            return None
+
+        display_color = self.average_display_color(box_colors)
 
         dims_str = np.array2string(dimensions, precision=3, suppress_small=True)
         self.get_logger().info(
-            f'Cluster {cluster_idx}: accepted, dims={dims_str}, score={score:.1f}'
+            f'Cluster {cluster_idx}: accepted, dims={dims_str}, '
+            f'score={score:.1f}, box_points={len(box_pts)}'
         )
 
         return BoxDetection(
             center=center,
             rotation_matrix=rotation_matrix,
             dimensions=dimensions,
-            inlier_points=cluster_pts,
-            inlier_colors=cluster_colors,
-            inlier_count=cluster_size,
+            inlier_points=box_pts,
+            inlier_colors=box_colors,
+            inlier_count=len(box_pts),
             score=score,
             display_color=display_color,
             label='box',
@@ -598,9 +684,16 @@ class BoxProcessorNode(Node):
                 self.numpy_to_pc2_rgb(pts_v, colors_v, frame_id, stamp=stamp)
             )
 
+        pts_candidates, colors_candidates = self.pipeline.color_filter(
+            pts_candidates, colors_candidates
+        )
+        self.get_logger().info(
+            f'Brown color-filtered candidate points: {len(pts_candidates)}'
+        )
+
         clusters = self.pipeline.euclidean_clustering(pts_candidates)
         self.get_logger().info(
-            f'Euclidean clusters after floor removal: {len(clusters)}'
+            f'Euclidean clusters after floor removal and color filtering: {len(clusters)}'
         )
 
         detections: List[BoxDetection] = []

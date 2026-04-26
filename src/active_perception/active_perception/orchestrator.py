@@ -28,15 +28,15 @@ class ActivePerceptionOrchestrator(Node):
     def __init__(self) -> None:
         super().__init__('active_perception_orchestrator')
 
-        self.declare_parameter('target_pose_topic', '/active_perception/target_pose')
+        self.declare_parameter('target_pose_topic', '/robot_10/active_perception/target_pose')
         self.declare_parameter(
-            'pose_sample_topic', '/active_perception/pose_estimate_sample'
+            'pose_sample_topic', '/robot_10/active_perception/pose_estimate_sample'
         )
-        self.declare_parameter('robot_pose_topic', '/odom')
+        self.declare_parameter('robot_pose_topic', '/robot_10/odom')
         self.declare_parameter(
-            'confidence_service_name', '/active_perception/evaluate_pose_confidence'
+            'confidence_service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
-        self.declare_parameter('nbv_service_name', '/active_perception/plan_nbv')
+        self.declare_parameter('nbv_service_name', '/robot_10/active_perception/plan_nbv')
         self.declare_parameter('history_size', 10)
         self.declare_parameter('desired_confidence_threshold', 0.75)
         self.declare_parameter('min_history_length', 5)

@@ -17,7 +17,7 @@ class ConfidenceEvaluatorNode(Node):
         super().__init__('confidence_evaluator')
 
         self.declare_parameter(
-            'service_name', '/active_perception/evaluate_pose_confidence'
+            'service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
         self.declare_parameter('weight_position_stability', 0.35)
         self.declare_parameter('weight_yaw_stability', 0.25)
