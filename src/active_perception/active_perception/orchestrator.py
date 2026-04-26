@@ -25,6 +25,8 @@ class OrchestratorState(Enum):
 
 
 class ActivePerceptionOrchestrator(Node):
+    MIN_CONFIDENCE_HISTORY = 10
+
     def __init__(self) -> None:
         super().__init__('active_perception_orchestrator')
 
@@ -37,13 +39,13 @@ class ActivePerceptionOrchestrator(Node):
             'confidence_service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
         self.declare_parameter('nbv_service_name', '/robot_10/active_perception/plan_nbv')
-        self.declare_parameter('history_size', 10)
+        self.declare_parameter('history_size', 20)
         self.declare_parameter('desired_confidence_threshold', 0.75)
-        self.declare_parameter('min_history_length', 5)
+        self.declare_parameter('min_history_length', 10)
         self.declare_parameter('nbv_num_candidates', 8)
         self.declare_parameter('nbv_radius', 0.8)
-        self.declare_parameter('nbv_min_radius', 0.5)
-        self.declare_parameter('nbv_max_radius', 1.2)
+        self.declare_parameter('nbv_min_radius', 1.0)
+        self.declare_parameter('nbv_max_radius', 3.0)
         self.declare_parameter('nbv_use_adaptive_radius', True)
 
         self.target_pose_topic = (
@@ -176,6 +178,14 @@ class ActivePerceptionOrchestrator(Node):
     def start_confidence_evaluation(self) -> None:
         if self.latest_target_pose is None or not self.history:
             self.state = OrchestratorState.WAITING_FOR_POSE
+            return
+
+        if len(self.history) < self.MIN_CONFIDENCE_HISTORY:
+            self.state = OrchestratorState.WAITING_FOR_POSE
+            self.get_logger().info(
+                'Waiting for more pose history before confidence evaluation: %d/%d'
+                % (len(self.history), self.MIN_CONFIDENCE_HISTORY)
+            )
             return
 
         if not self.confidence_client.wait_for_service(timeout_sec=0.1):

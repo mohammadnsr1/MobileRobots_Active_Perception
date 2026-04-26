@@ -24,7 +24,7 @@ class NBVPlannerNode(Node):
         self.declare_parameter('service_name', '/robot_10/active_perception/plan_nbv')
         self.declare_parameter('planning_frame', 'odom')
         self.declare_parameter('default_num_candidates', 8)
-        self.declare_parameter('default_radius', 0.8)
+        self.declare_parameter('default_radius', 1.0)
         self.declare_parameter('candidate_marker_topic', '/robot_10/active_perception/nbv_markers')
         self.declare_parameter('weight_radius_error', 0.2)
         self.declare_parameter('weight_travel_distance', 0.6)
