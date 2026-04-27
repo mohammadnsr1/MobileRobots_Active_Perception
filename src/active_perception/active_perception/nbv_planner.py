@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import math
 from typing import List, Tuple
 
@@ -65,6 +66,12 @@ class NBVPlannerNode(Node):
 
         self.marker_pub = self.create_publisher(
             MarkerArray, self.candidate_marker_topic, 10
+        )
+        self.latest_marker_array = None
+        self.marker_republish_period = 0.5
+        self.marker_timer = self.create_timer(
+            self.marker_republish_period,
+            self.republish_latest_markers,
         )
         self.service = self.create_service(
             PlanNBV, self.service_name, self.plan_nbv_callback
@@ -219,6 +226,21 @@ class NBVPlannerNode(Node):
         pose.orientation.w = qw
         return pose
 
+    def republish_latest_markers(self) -> None:
+        if self.latest_marker_array is None:
+            return
+
+        marker_array = copy.deepcopy(self.latest_marker_array)
+        now = self.get_clock().now().to_msg()
+
+        for marker in marker_array.markers:
+            if marker.action != Marker.DELETEALL:
+                marker.header.stamp = now
+                marker.lifetime.sec = 0
+                marker.lifetime.nanosec = 0
+
+        self.marker_pub.publish(marker_array)
+
     def publish_markers(
         self,
         candidates: PoseArray,
@@ -244,6 +266,8 @@ class NBVPlannerNode(Node):
         ring_marker.color.g = 0.8
         ring_marker.color.b = 1.0
         ring_marker.color.a = 0.7
+        ring_marker.lifetime.sec = 0
+        ring_marker.lifetime.nanosec = 0
 
         for i in range(33):
             angle = (2.0 * math.pi * i) / 32.0
@@ -273,8 +297,11 @@ class NBVPlannerNode(Node):
                 if idx == selected_index
                 else ColorRGBA(r=1.0, g=0.6, b=0.1, a=0.6)
             )
+            marker.lifetime.sec = 0
+            marker.lifetime.nanosec = 0
             marker_array.markers.append(marker)
 
+        self.latest_marker_array = copy.deepcopy(marker_array)
         self.marker_pub.publish(marker_array)
 
     def plan_nbv_callback(
