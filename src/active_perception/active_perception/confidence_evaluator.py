@@ -13,9 +13,9 @@ from active_perception_interfaces.srv import EvaluatePoseConfidence
 
 
 class ConfidenceEvaluatorNode(Node):
-    POSITION_VARIANCE_NORM = 0.01
+    POSITION_VARIANCE_NORM = 0.005
     YAW_VARIANCE_NORM = 0.08
-    POINT_COUNT_NORM = 1.0
+    POINT_COUNT_NORM = 200.0
     ANISOTROPY_NORM = 0.5
 
     def __init__(self) -> None:
@@ -24,10 +24,18 @@ class ConfidenceEvaluatorNode(Node):
         self.declare_parameter(
             'service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
+        self.declare_parameter('weight_position', 0.4)
+        self.declare_parameter('weight_yaw', 0.3)
+        self.declare_parameter('weight_point_count', 0.15)
+        self.declare_parameter('weight_anisotropy', 0.15)
 
         self.service_name = (
             self.get_parameter('service_name').get_parameter_value().string_value
         )
+        self.weight_position = self.get_parameter('weight_position').value
+        self.weight_yaw = self.get_parameter('weight_yaw').value
+        self.weight_point_count = self.get_parameter('weight_point_count').value
+        self.weight_anisotropy = self.get_parameter('weight_anisotropy').value
 
         self.service = self.create_service(
             EvaluatePoseConfidence,
@@ -138,8 +146,15 @@ class ConfidenceEvaluatorNode(Node):
                 1.0,
             )
         )
-        response.confidence_score = 0.25 * (
-            position_stability + yaw_stability + point_score + anisotropy_score
+        self.get_logger().info(
+            f'Components -> pos:{position_stability:.3f}, yaw:{yaw_stability:.3f}, '
+            f'points:{point_score:.3f}, anisotropy:{anisotropy_score:.3f}'
+        )
+        response.confidence_score = (
+            self.weight_position * position_stability
+            + self.weight_yaw * yaw_stability
+            + self.weight_point_count * point_score
+            + self.weight_anisotropy * anisotropy_score
         )
         response.success = True
 
