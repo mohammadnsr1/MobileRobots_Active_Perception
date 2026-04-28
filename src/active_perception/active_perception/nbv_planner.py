@@ -28,8 +28,11 @@ class NBVPlannerNode(Node):
         self.declare_parameter('default_radius', 1.0)
         self.declare_parameter('candidate_marker_topic', '/robot_10/active_perception/nbv_markers')
         self.declare_parameter('weight_radius_error', 0.2)
-        self.declare_parameter('weight_travel_distance', 0.6)
+        self.declare_parameter('weight_travel_distance', 0.1)
         self.declare_parameter('weight_heading_change', 0.2)
+        self.declare_parameter('randomize_radius', True)
+        self.declare_parameter('min_candidate_travel_distance', 0.25)
+        self.declare_parameter('rng_seed', 0)
 
         self.service_name = (
             self.get_parameter('service_name').get_parameter_value().string_value
@@ -62,6 +65,20 @@ class NBVPlannerNode(Node):
             self.get_parameter('weight_heading_change')
             .get_parameter_value()
             .double_value
+        )
+        self.randomize_radius = (
+            self.get_parameter('randomize_radius').get_parameter_value().bool_value
+        )
+        self.min_candidate_travel_distance = (
+            self.get_parameter('min_candidate_travel_distance')
+            .get_parameter_value()
+            .double_value
+        )
+        self.rng_seed = (
+            self.get_parameter('rng_seed').get_parameter_value().integer_value
+        )
+        self.rng = np.random.default_rng(
+            None if int(self.rng_seed) == 0 else int(self.rng_seed)
         )
 
         self.marker_pub = self.create_publisher(
@@ -346,9 +363,9 @@ class NBVPlannerNode(Node):
         robot_yaw = self.quaternion_to_yaw(robot_pose.pose.orientation)
 
         current_distance = float(np.linalg.norm(robot_xy - target_xy))
-        radius = desired_radius
+        base_radius = desired_radius
         if request.use_adaptive_radius and current_distance > 1e-6:
-            radius = float(np.clip(current_distance, min_radius, max_radius))
+            base_radius = float(np.clip(current_distance, min_radius, max_radius))
 
         base_angle = math.atan2(
             float(robot_xy[1] - target_xy[1]), float(robot_xy[0] - target_xy[0])
@@ -359,20 +376,29 @@ class NBVPlannerNode(Node):
         candidates.header.stamp = target_pose.header.stamp
 
         candidate_costs: List[float] = []
+        candidate_radii: List[float] = []
         for idx in range(num_candidates):
             angle = base_angle + (2.0 * math.pi * idx) / float(num_candidates)
-            x = float(target_xy[0] + radius * math.cos(angle))
-            y = float(target_xy[1] + radius * math.sin(angle))
+            if self.randomize_radius:
+                candidate_radius = float(self.rng.uniform(min_radius, max_radius))
+            else:
+                candidate_radius = base_radius
+
+            x = float(target_xy[0] + candidate_radius * math.cos(angle))
+            y = float(target_xy[1] + candidate_radius * math.sin(angle))
             z = 0.0
             yaw = math.atan2(float(target_xy[1] - y), float(target_xy[0] - x))
+
+            candidate_xy = np.array([x, y], dtype=np.float64)
+            travel_distance = float(np.linalg.norm(candidate_xy - robot_xy))
+            if travel_distance < self.min_candidate_travel_distance:
+                continue
 
             pose = self.create_pose(x, y, z, yaw)
             candidates.poses.append(pose)
 
-            candidate_xy = np.array([x, y], dtype=np.float64)
-            travel_distance = float(np.linalg.norm(candidate_xy - robot_xy))
             heading_change = abs(self.wrap_angle(yaw - robot_yaw))
-            radius_error = abs(radius - desired_radius)
+            radius_error = abs(candidate_radius - desired_radius)
 
             radius_term = radius_error / max(desired_radius, 1e-6)
             travel_term = travel_distance / max(max_radius, 1e-6)
@@ -384,28 +410,33 @@ class NBVPlannerNode(Node):
                 + self.weight_heading_change * heading_term
             )
             candidate_costs.append(float(total_cost))
+            candidate_radii.append(candidate_radius)
 
         if not candidate_costs:
-            response.diagnostic_message = 'No candidate viewpoints generated.'
+            response.diagnostic_message = (
+                'No valid candidate viewpoints generated after filtering near-current-pose candidates.'
+            )
             return response
 
         selected_index = int(np.argmin(candidate_costs))
+        selected_radius = candidate_radii[selected_index]
         response.success = True
         response.selected_index = selected_index
         response.candidate_views = candidates
         response.best_view.header = candidates.header
         response.best_view.pose = candidates.poses[selected_index]
         response.diagnostic_message = (
-            'selected=%d radius=%.3f num_candidates=%d min_cost=%.3f'
+            'selected=%d selected_radius=%.3f valid_candidates=%d requested_candidates=%d min_cost=%.3f'
             % (
                 selected_index,
-                radius,
+                selected_radius,
+                len(candidate_costs),
                 num_candidates,
                 candidate_costs[selected_index],
             )
         )
 
-        self.publish_markers(candidates, selected_index, target_pose, radius)
+        self.publish_markers(candidates, selected_index, target_pose, desired_radius)
         return response
 
 
