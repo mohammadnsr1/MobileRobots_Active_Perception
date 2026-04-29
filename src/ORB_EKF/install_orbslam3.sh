@@ -53,11 +53,25 @@ else
   exit 1
 fi
 
+echo "Building DBoW2 (ORB-SLAM3 third-party)..."
+cmake -B "${ORB_DIR}/Thirdparty/DBoW2/build" -S "${ORB_DIR}/Thirdparty/DBoW2" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build "${ORB_DIR}/Thirdparty/DBoW2/build" -j"$(nproc)"
+
+echo "Building g2o (ORB-SLAM3 third-party)..."
+cmake -B "${ORB_DIR}/Thirdparty/g2o/build" -S "${ORB_DIR}/Thirdparty/g2o" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build "${ORB_DIR}/Thirdparty/g2o/build" -j"$(nproc)"
+
 echo "Building ORB-SLAM3 core library..."
 cmake -B "${ORB_DIR}/build" -S "${ORB_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="${PANGOLIN_INSTALL_DIR}"
-cmake --build "${ORB_DIR}/build" -j1 --target ORB_SLAM3
+  -DCMAKE_PREFIX_PATH="${PANGOLIN_INSTALL_DIR}" \
+  -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=array-bounds -Wno-error=stringop-overflow"
+cmake --build "${ORB_DIR}/build" -j"$(nproc)" --target ORB_SLAM3
+
+echo "Extracting ORB vocabulary..."
+tar -xf "${ORB_DIR}/Vocabulary/ORBvoc.txt.tar.gz" -C "${ORB_DIR}/Vocabulary/"
 
 echo "Building Python bridge..."
 "${ROOT_DIR}/build_orbslam3_backend.sh"

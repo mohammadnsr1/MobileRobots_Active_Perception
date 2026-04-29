@@ -10,8 +10,8 @@ orb_stereo_vo_node:
     base_frame: base_link
     wheel_odom_topic: /robot_10/odom
     publish_vo_tf: false
-    require_base_tf: true
-    align_vo_to_odom_on_start: true
+    require_base_tf: false
+    align_vo_to_odom_on_start: false
     vocabulary_file: ""
     settings_file: ""
     orbslam_backend_library: ""

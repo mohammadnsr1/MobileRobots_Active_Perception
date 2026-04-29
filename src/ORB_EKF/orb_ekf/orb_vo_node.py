@@ -147,13 +147,18 @@ class StereoCalibration:
         right_p = np.asarray(right.p, dtype=np.float64).reshape(3, 4)
 
         left_rect_k = left_p[:, :3]
-        right_rect_k = right_p[:, :3]
+        right_rect_k = right_p[:, :3]  # kept for reference only
 
         left_map1, left_map2 = cv2.initUndistortRectifyMap(
             left_k, left_d, left_r, left_rect_k, size, cv2.CV_32FC1
         )
+        # Use left_rect_k for the right camera so both images land in the same
+        # coordinate system. OAK-D camera_info has independent mono calibrations
+        # giving cx differing by ~39px and cy by ~16px. Using right_rect_k causes
+        # 16px epipolar row misalignment — outside ORB-SLAM3's ±2px tolerance —
+        # so nearly all stereo matches fail and metric scale is lost.
         right_map1, right_map2 = cv2.initUndistortRectifyMap(
-            right_k, right_d, right_r, right_rect_k, size, cv2.CV_32FC1
+            right_k, right_d, right_r, left_rect_k, size, cv2.CV_32FC1
         )
 
         tx_left = float(left_p[0, 3]) / float(left_p[0, 0]) if abs(float(left_p[0, 0])) > 1e-12 else 0.0
@@ -218,14 +223,11 @@ class OrbStereoVONode(Node):
         self.backend_module = None
         self.left_info_msg: Optional[CameraInfo] = None
         self.right_info_msg: Optional[CameraInfo] = None
-        self.t_camera_base: Optional[np.ndarray] = None
-        self.last_tf_lookup_fail_ns = 0
-        self.last_align_wait_log_ns = 0
-        self.last_timestamp: Optional[float] = None
-        self.accepted_pairs = 0
-        self.rejected_pairs = 0
         self.latest_wheel_odom: Optional[Odometry] = None
         self.t_odom_orbworld: Optional[np.ndarray] = None
+        self.vo_origin: Optional[np.ndarray] = None
+        self.odom_origin: Optional[tuple] = None
+        self._backend_failed = False
 
         self.left_info_sub = self.create_subscription(
             CameraInfo,
@@ -339,9 +341,16 @@ class OrbStereoVONode(Node):
         return None
 
     def find_default_vocabulary(self) -> str:
-        candidates = [
+        candidates = []
+        try:
+            from ament_index_python.packages import get_package_prefix
+            ws_root = Path(get_package_prefix("orb_ekf")).parents[1]
+            candidates.append(str(ws_root / "src" / "ORB_EKF" / "vendor" / "ORB_SLAM3" / "Vocabulary" / "ORBvoc.txt"))
+        except Exception:
+            pass
+        candidates += [
             str(Path.cwd() / "vendor" / "ORB_SLAM3" / "Vocabulary" / "ORBvoc.txt"),
-            str(Path(__file__).resolve().parents[2] / "vendor" / "ORB_SLAM3" / "Vocabulary" / "ORBvoc.txt"),
+            str(Path(__file__).resolve().parents[1] / "vendor" / "ORB_SLAM3" / "Vocabulary" / "ORBvoc.txt"),
             str(Path.home() / "ORBvoc.txt"),
         ]
         for candidate in candidates:
@@ -349,9 +358,19 @@ class OrbStereoVONode(Node):
                 return candidate
         return ""
 
+    def find_default_settings(self) -> str:
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            candidate = Path(get_package_share_directory("orb_ekf")) / "config" / "orbslam3_stereo.yaml"
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            pass
+        return ""
+
     def start_backend(self) -> None:
         assert self.calibration is not None
-        if self.backend is not None:
+        if self.backend is not None or self._backend_failed:
             return
         backend_module = self._load_backend_module()
         if backend_module is None:
@@ -362,9 +381,12 @@ class OrbStereoVONode(Node):
             vocabulary_file = self.find_default_vocabulary()
         if not vocabulary_file:
             self.get_logger().error("Missing vocabulary file. Set parameter 'vocabulary_file' to ORBvoc.txt path.")
+            self._backend_failed = True
             return
 
         settings_file = str(self.get_parameter("settings_file").value).strip()
+        if not settings_file:
+            settings_file = self.find_default_settings()
         if not settings_file:
             settings_file = self.write_settings_file()
 
@@ -436,73 +458,56 @@ class OrbStereoVONode(Node):
             return False
 
     def on_stereo(self, left_msg: Image, right_msg: Image) -> None:
-        if self.calibration is None:
+        if self.calibration is None or self.backend is None:
             return
-        if self.backend is None:
-            self.start_backend()
-            if self.backend is None:
-                return
-
-        if bool(self.get_parameter("require_base_tf").value) and not self.try_resolve_camera_to_base():
-            return
-        if self.t_camera_base is None:
-            self.try_resolve_camera_to_base()
-
-        t_left = float(left_msg.header.stamp.sec) + float(left_msg.header.stamp.nanosec) * 1e-9
-        t_right = float(right_msg.header.stamp.sec) + float(right_msg.header.stamp.nanosec) * 1e-9
-        sync_delta_ms = abs(t_left - t_right) * 1000.0
-
-        if bool(self.get_parameter("enable_sync_gate").value):
-            max_delta_ms = float(self.get_parameter("max_sync_delta_ms").value)
-            if sync_delta_ms > max_delta_ms:
-                self.rejected_pairs += 1
-                return
-
-        if self.last_timestamp is not None and t_left <= self.last_timestamp:
-            self.get_logger().warn("Timestamp moved backwards, skipping frame.")
-            return
-        self.last_timestamp = t_left
-        self.accepted_pairs += 1
 
         left_raw = self.bridge.imgmsg_to_cv2(left_msg, desired_encoding="mono8")
         right_raw = self.bridge.imgmsg_to_cv2(right_msg, desired_encoding="mono8")
+        left_img = cv2.remap(left_raw, self.calibration.left_map1, self.calibration.left_map2, cv2.INTER_LINEAR)
+        right_img = cv2.remap(right_raw, self.calibration.right_map1, self.calibration.right_map2, cv2.INTER_LINEAR)
 
-        if bool(self.get_parameter("use_rectification").value):
-            left_img = cv2.remap(left_raw, self.calibration.left_map1, self.calibration.left_map2, cv2.INTER_LINEAR)
-            right_img = cv2.remap(
-                right_raw, self.calibration.right_map1, self.calibration.right_map2, cv2.INTER_LINEAR
-            )
-        else:
-            left_img = left_raw
-            right_img = right_raw
+        t_left = float(left_msg.header.stamp.sec) + float(left_msg.header.stamp.nanosec) * 1e-9
+        pose_mat = self.backend.track_stereo(left_img, right_img, t_left)
 
-        pose_t_cw = np.asarray(self.backend.track_stereo(left_img, right_img, t_left), dtype=np.float64)
-        if pose_t_cw.shape != (4, 4):
-            return
-        if hasattr(self.backend, "is_lost") and self.backend.is_lost():
+        if self.backend.get_tracking_state() != 2:
             return
 
-        t_world_camera = np.linalg.inv(pose_t_cw)
-        t_world_base = t_world_camera
-        if self.t_camera_base is not None:
-            t_world_base = t_world_camera @ self.t_camera_base
+        # Eigen is column-major; memcpy into row-major numpy transposes — .T corrects it.
+        pose = np.asarray(pose_mat, dtype=np.float64).T
+        if pose.shape == (3, 4):
+            pose = np.vstack([pose, [0, 0, 0, 1]])
+        if pose.shape != (4, 4):
+            return
 
-        t_publish = t_world_base
-        if bool(self.get_parameter("align_vo_to_odom_on_start").value):
-            if self.t_odom_orbworld is None:
-                if self.latest_wheel_odom is None:
-                    now_ns = self.get_clock().now().nanoseconds
-                    if now_ns - self.last_align_wait_log_ns > int(2e9):
-                        self.get_logger().warn("Waiting for wheel odom to compute startup VO->odom alignment.")
-                        self.last_align_wait_log_ns = now_ns
-                    return
-                t_odom_base0 = odom_pose_to_matrix(self.latest_wheel_odom)
-                self.t_odom_orbworld = t_odom_base0 @ np.linalg.inv(t_world_base)
-                self.get_logger().info("Initialized startup alignment: ORB world -> odom.")
-            t_publish = self.t_odom_orbworld @ t_world_base
+        world_pose = np.linalg.inv(pose)
 
-        translation = t_publish[:3, 3]
-        quaternion = rotation_to_quaternion(t_publish[:3, :3])
+        if self.latest_wheel_odom is None:
+            return
+
+        odom_x = float(self.latest_wheel_odom.pose.pose.position.x)
+        odom_y = float(self.latest_wheel_odom.pose.pose.position.y)
+        q = self.latest_wheel_odom.pose.pose.orientation
+        odom_yaw = np.arctan2(2.0 * (q.w * q.z + q.x * q.y),
+                              1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+        if self.t_odom_orbworld is None:
+            self.vo_origin = world_pose.copy()
+            self.odom_origin = (odom_x, odom_y, odom_yaw)
+            self.t_odom_orbworld = np.eye(4)
+            self.get_logger().info("VO origin captured — publishing started.")
+
+        T_rel = np.linalg.inv(self.vo_origin) @ world_pose
+        d = T_rel[:3, 3]
+
+        dx_robot = d[2]    # cam Z (forward) → robot X
+        dy_robot = -d[0]   # cam X (right)   → robot -Y
+
+        ox, oy, oyaw = self.odom_origin
+        vo_x = ox + dx_robot * np.cos(oyaw) - dy_robot * np.sin(oyaw)
+        vo_y = oy + dx_robot * np.sin(oyaw) + dy_robot * np.cos(oyaw)
+
+        translation = np.array([vo_x, vo_y, 0.0])
+        quaternion = rotation_to_quaternion(world_pose[:3, :3])
         self.publish_outputs(left_msg.header, translation, quaternion)
 
     def publish_outputs(self, header, translation: np.ndarray, quaternion: np.ndarray) -> None:

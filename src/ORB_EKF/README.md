@@ -1,124 +1,211 @@
-# ORB_EKF (ROS 2 package: `orb_ekf`)
+# ORB_EKF — ROS 2 Package (`orb_ekf`)
 
-This package wires:
+Stereo Visual Odometry (VO) for ROS 2 using ORB-SLAM3, with a fused path output.
 
-1. ORB-SLAM stereo VO (`orb_vo_node`) from left/right images.
-2. EKF fusion (`robot_localization/ekf_node`) using wheel odom + ORB VO odom.
-3. Final fused outputs (`fused_output_node`) as path + pose.
+## What this package does
+
+Two nodes run together:
+
+1. **`orb_vo_node`** — subscribes to a stereo camera pair, runs ORB-SLAM3 tracking, and publishes the camera trajectory as odometry and a path in the `odom` frame.
+2. **`fused_output_node`** — subscribes to the VO odometry and wheel odometry, computes a naive position average, and publishes it as a path for visualization.
+
+---
+
+## Prerequisites
+
+- ROS 2 (Jazzy or compatible)
+- Python 3.12
+- System packages: `build-essential`, `cmake`, `libeigen3-dev`, `libopencv-dev`, `libglew-dev`, `libgl1-mesa-dev`
+
+---
+
+## Step 1 — Install ORB-SLAM3 and build the Python backend
+
+Run this **once** from inside the package directory. It clones Pangolin and ORB-SLAM3 under `vendor/`, builds them, and compiles the Python bridge (`orbslam3_backend*.so`).
+
+```bash
+cd /path/to/ros2_ws/src/ORB_EKF
+./install_orbslam3.sh
+```
+
+After this completes, the following files will exist:
+
+| File | Purpose |
+|---|---|
+| `vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt` | ORB visual vocabulary required by ORB-SLAM3 at startup |
+| `orbslam3_backend.cpython-312-x86_64-linux-gnu.so` | Compiled Python/C++ bridge that lets the Python node call ORB-SLAM3 C++ APIs |
+
+> If you already have ORB-SLAM3 built and only need to rebuild the Python bridge, run `./build_orbslam3_backend.sh` directly.
+
+---
+
+## Step 2 — Build the ROS 2 package
+
+Run from the **workspace root** (not from inside `ORB_EKF`):
+
+```bash
+cd /path/to/ros2_ws
+colcon build --packages-select orb_ekf --symlink-install
+source install/setup.bash
+```
+
+`--symlink-install` means edits to Python source files take effect immediately without rebuilding.
+
+---
+
+## Step 3 — Run
+
+```bash
+ros2 launch orb_ekf orb_ekf.launch.py
+```
+
+The node will automatically locate the vocabulary file and camera settings using the workspace install path. If auto-detection fails, pass them explicitly:
+
+```bash
+ros2 launch orb_ekf orb_ekf.launch.py \
+  vocabulary_file:=/path/to/ros2_ws/src/ORB_EKF/vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt \
+  orbslam_backend_library:=/path/to/ros2_ws/src/ORB_EKF/orbslam3_backend.cpython-312-x86_64-linux-gnu.so
+```
+
+To override input or output topics at launch time:
+
+```bash
+ros2 launch orb_ekf orb_ekf.launch.py \
+  left_image_topic:=/my_robot/left/image_raw \
+  right_image_topic:=/my_robot/right/image_raw \
+  left_camera_info_topic:=/my_robot/left/camera_info \
+  right_camera_info_topic:=/my_robot/right/camera_info \
+  wheel_odom_topic:=/my_robot/odom
+```
+
+---
 
 ## Topics
 
-- Stereo input:
-  - `/robot_10/oakd/left/image_raw`
-  - `/robot_10/oakd/right/image_raw`
-  - `/robot_10/oakd/left/camera_info`
-  - `/robot_10/oakd/right/camera_info`
-- Wheel odom input:
-  - `/robot_10/odom`
-- ORB VO output:
-  - `/orb_slam/vo_odom`
-  - `/orb_slam/vo_path`
-- EKF output:
-  - `/odometry/filtered`
-- Fused output node:
-  - `/orb_ekf/fused_pose`
-  - `/orb_ekf/fused_path`
+### Inputs (subscribed)
 
-## Install ORB-SLAM (required first)
+| Topic | Type | Description |
+|---|---|---|
+| `/robot_10/oakd/left/image_raw` | `sensor_msgs/Image` | Left rectified or raw camera image |
+| `/robot_10/oakd/right/image_raw` | `sensor_msgs/Image` | Right rectified or raw camera image |
+| `/robot_10/oakd/left/camera_info` | `sensor_msgs/CameraInfo` | Left camera calibration (K, D, R, P) |
+| `/robot_10/oakd/right/camera_info` | `sensor_msgs/CameraInfo` | Right camera calibration (K, D, R, P) |
+| `/robot_10/odom` | `nav_msgs/Odometry` | Wheel odometry used for startup alignment and fusion |
 
-`ORB_EKF` depends on the ORB-SLAM backend (`orbslam3_backend`) and vocabulary file (`ORBvoc.txt`).
+Default topic names are set in `config/orb_vo.yaml` and can be overridden at launch.
 
-Run this once from `ORB_EKF`:
+### Outputs (published)
 
+| Topic | Type | Node | Description |
+|---|---|---|---|
+| `/orb_slam/vo_odom` | `nav_msgs/Odometry` | `orb_stereo_vo_node` | VO pose in the `odom` frame at camera frame rate |
+| `/orb_slam/vo_path` | `nav_msgs/Path` | `orb_stereo_vo_node` | Full VO trajectory since startup |
+| `/orb_ekf/average_path` | `nav_msgs/Path` | `orb_ekf_fused_output_node` | Naive average of VO position and wheel odom position |
+
+---
+
+## Configuration files
+
+### `config/orb_vo.yaml`
+
+ROS 2 parameter file loaded by `orb_vo_node` at startup. Controls runtime behavior.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `left_image_topic` | `/robot_10/oakd/left/image_raw` | Left camera image input |
+| `right_image_topic` | `/robot_10/oakd/right/image_raw` | Right camera image input |
+| `left_camera_info_topic` | `/robot_10/oakd/left/camera_info` | Left camera info input |
+| `right_camera_info_topic` | `/robot_10/oakd/right/camera_info` | Right camera info input |
+| `wheel_odom_topic` | `/robot_10/odom` | Wheel odometry input |
+| `vo_odom_topic` | `/orb_slam/vo_odom` | VO odometry output |
+| `vo_path_topic` | `/orb_slam/vo_path` | VO path output |
+| `world_frame` | `odom` | Fixed frame for publishing poses |
+| `base_frame` | `base_link` | Robot base frame |
+| `publish_vo_tf` | `false` | Whether to broadcast `odom → base_link` TF from VO |
+| `require_base_tf` | `false` | If true, wait for camera→base_link TF before processing |
+| `align_vo_to_odom_on_start` | `false` | Align VO origin to wheel odom pose at first tracked frame |
+| `use_rectification` | `true` | Apply undistort+rectify maps to images before tracking |
+| `enable_sync_gate` | `true` | Drop stereo pairs whose timestamps differ by more than `max_sync_delta_ms` |
+| `max_sync_delta_ms` | `15.0` | Maximum allowed timestamp gap between left and right images (ms) |
+| `sync_slop` | `0.05` | ApproximateTimeSynchronizer slop window (seconds) |
+| `camera_fps` | `30.0` | Used when auto-generating the ORB-SLAM3 settings file |
+| `vocabulary_file` | `""` | Path to `ORBvoc.txt`; auto-located via workspace if empty |
+| `settings_file` | `""` | Path to ORB-SLAM3 camera YAML; auto-located if empty |
+| `orbslam_backend_library` | `""` | Path to `orbslam3_backend*.so`; searched automatically if empty |
+| `generated_settings_file` | `/tmp/orb_ekf_orbslam3_stereo.yaml` | Where to write the auto-generated settings file |
+
+**To change topic names:** edit `config/orb_vo.yaml`. No rebuild needed if built with `--symlink-install`.
+
+---
+
+### `config/orbslam3_stereo.yaml`
+
+ORB-SLAM3 camera and feature extractor settings. Loaded directly by the ORB-SLAM3 C++ library (not by ROS 2 parameter system).
+
+| Parameter | Value | Description |
+|---|---|---|
+| `Camera.type` | `Rectified` | Tells ORB-SLAM3 images arrive pre-rectified |
+| `Camera1.fx / fy` | `457.30` | Focal length in pixels (from left camera projection matrix) |
+| `Camera1.cx / cy` | `338.46 / 249.60` | Principal point in pixels (left camera, used for both cameras after rectification fix) |
+| `Camera.width / height` | `640 / 480` | Image resolution |
+| `Camera.fps` | `30` | Camera frame rate |
+| `Stereo.b` | `0.07521` | Stereo baseline in meters |
+| `Stereo.ThDepth` | `40.0` | Depth threshold in units of baseline (points beyond this are treated as far) |
+| `ORBextractor.nFeatures` | `1500` | Number of ORB features extracted per frame |
+| `ORBextractor.scaleFactor` | `1.2` | Scale between pyramid levels |
+| `ORBextractor.nLevels` | `8` | Number of image pyramid levels |
+| `ORBextractor.iniThFAST` | `20` | Initial FAST corner threshold |
+| `ORBextractor.minThFAST` | `7` | Minimum FAST threshold if not enough corners found at initial threshold |
+
+This file is used when `settings_file` is set explicitly. If `settings_file` is left empty in `orb_vo.yaml`, the node generates an equivalent file at runtime from the live `camera_info` messages.
+
+---
+
+### `config/ekf.yaml`
+
+Configuration for `robot_localization`'s EKF node. **Not loaded by the current launch file.** Provided for optional manual use if you want to run a full EKF fusion alongside this package.
+
+It fuses:
+- `odom0`: `/robot_10/odom` — wheel odometry (x, y, yaw, vx, vy, vyaw)
+- `odom1`: `/orb_slam/vo_odom` — VO odometry (x, y, yaw only, pose-only)
+
+To use it manually:
 ```bash
-cd ORB_EKF
-./install_orbslam3.sh
-./build_orbslam3_backend.sh
+ros2 run robot_localization ekf_node --ros-args --params-file config/ekf.yaml
 ```
 
-What this installs/builds:
-- Pangolin (under `ORB_EKF/vendor/pangolin_install`)
-- ORB-SLAM3 core (under `ORB_EKF/vendor/ORB_SLAM3`)
-- Python backend bridge (`orbslam3_backend*.so`)
+---
 
-Typical paths after install:
-- Vocabulary: `/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt`
-- Backend `.so`: `/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/orbslam3_backend.cpython-312-x86_64-linux-gnu.so`
+## `vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt`
 
-## Build ORB_EKF
+The ORB visual vocabulary file. It is a large pre-trained bag-of-words database (~1M visual words) used by ORB-SLAM3 for place recognition and loop closure. ORB-SLAM3 **will not initialize** without it. It is extracted from a compressed archive during `./install_orbslam3.sh` and is not committed to the repository.
 
-```bash
-cd ORB_EKF
-colcon build --packages-select orb_ekf --base-paths .
-source install/setup.bash
-```
+---
 
-Dependencies are declared in [package.xml](/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/package.xml), including `robot_localization`, `launch_ros`, `tf2_ros`, `cv_bridge`, and message packages.
+## Node details
 
-For standalone use, `orbslam3_backend` must be available:
-- either importable in your Python environment (`import orbslam3_backend`)
-- or passed as a compiled shared library path via launch argument `orbslam_backend_library:=/abs/path/orbslam3_backend*.so`
+### `orb_stereo_vo_node` (executable: `orb_vo_node`)
 
-## What each piece is doing (and why)
+- Waits for both `camera_info` messages, then builds rectification maps from the calibration.
+- Loads the ORB-SLAM3 backend and vocabulary.
+- For each synchronized stereo pair: rectifies both images, passes them to `track_stereo`, converts the resulting camera pose to the `odom` frame, and publishes `/orb_slam/vo_odom` and `/orb_slam/vo_path`.
+- On first tracked frame, captures the VO origin and aligns it to the current wheel odometry pose so both paths start at the same point.
 
-- `vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt`: ORB-SLAM visual vocabulary. It is required to perform place recognition and robust feature matching; ORB-SLAM will not initialize without it.
-- `orbslam3_backend*.so`: Python/C++ bridge built from `orbslam3_backend.cpp`. It lets the Python ROS 2 node call ORB-SLAM C++ (`StereoSystem`, `track_stereo`) frame-by-frame. 
-- `orb_vo_node.py`: ROS 2 bridge node for stereo VO. It subscribes to left/right image + camera_info, rectifies images, calls ORB-SLAM backend, converts camera pose to `base_link` using TF, aligns startup pose to wheel odom, and publishes `/orb_slam/vo_odom`.
-- `config/orb_vo.yaml`: runtime behavior for ORB node (topics, sync limits, TF behavior, startup alignment, ORB backend path options).
-- `config/ekf.yaml`: `robot_localization` fusion model. It tells EKF which states from wheel odom and VO odom should be fused in 2D (`x, y, yaw`, etc.) and publishes fused `/odometry/filtered`.
-- `fused_output_node.py`: convenience publisher that converts EKF odom into easy-to-plot pose/path topics (`/orb_ekf/fused_pose`, `/orb_ekf/fused_path`).
-- `launch/orb_ekf.launch.py`: runs the full stack in the correct order with shared parameters.
+### `orb_ekf_fused_output_node` (executable: `fused_output_node`)
 
-## Launch execution flow
+- Subscribes to `/orb_slam/vo_odom` and `/robot_10/odom`.
+- At each VO frame, takes the latest wheel odom position and averages it with the VO position (x, y only).
+- Publishes the averaged positions as `/orb_ekf/average_path` for visualization.
+- This is a lightweight placeholder. For proper sensor fusion, use the EKF setup in `config/ekf.yaml` with `robot_localization`.
 
-When you run `ros2 launch orb_ekf orb_ekf.launch.py ...`, the system does this:
+---
 
-1. Starts `orb_vo_node` and waits for camera info + stereo images.
-2. Loads `orbslam3_backend` and ORB vocabulary, then runs ORB-SLAM tracking per stereo pair.
-3. Converts ORB camera pose to `base_link` using TF (`base_link <- camera_frame`).
-4. Initializes ORB-world to odom startup alignment using first wheel odom pose.
-5. Publishes VO odom (`/orb_slam/vo_odom`) in odom-aligned frame.
-6. Starts `robot_localization` `ekf_node` and fuses `/robot_10/odom` + `/orb_slam/vo_odom`.
-7. Publishes fused odom (`/odometry/filtered`) and final `odom -> base_link` TF.
-8. Publishes fused path/pose for visualization.
+## Visualizing in RViz
 
-## Run
+Add the following displays in RViz (Fixed Frame: `odom`):
 
-Use this as the default launch command:
-- `cd ORB_EKF`: enters the standalone package root.
-- `source install/setup.bash`: loads this package's ROS 2 environment after build.
-- `ros2 launch orb_ekf orb_ekf.launch.py`: starts ORB VO node, EKF node, and fused output node together.
-- `vocabulary_file:=.../ORBvoc.txt`: points to ORB-SLAM visual vocabulary file (required by ORB-SLAM system initialization).
-- `orbslam_backend_library:=.../orbslam3_backend*.so`: points to compiled Python/C++ bridge module used by `orb_vo_node.py` to call ORB-SLAM C++ APIs.
-
-```bash
-cd ORB_EKF
-source install/setup.bash
-ros2 launch orb_ekf orb_ekf.launch.py \
-  vocabulary_file:=/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt \
-  orbslam_backend_library:=/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/orbslam3_backend.cpython-312-x86_64-linux-gnu.so
-```
-
-## TF notes
-
-- `orb_vo_node` resolves TF from camera frame to `base_link` and converts ORB camera pose to base pose before publishing VO odom.
-- EKF publishes the final `odom -> base_link` TF.
-- If your bag already has camera-to-base TF, use only the default command above.
-- If your bag does not provide camera-to-base TF, run the same launch command with extra static TF arguments:
-- `use_static_camera_tf:=true`: enables launching a static TF publisher.
-- `camera_frame:=oakd_left_camera_optical_frame`: camera frame name that will be connected to `base_link`.
-- `static_tf_x/y/z`: translation values for `base_link -> camera_frame` (meters).
-- `static_tf_qx/qy/qz/qw`: rotation quaternion for `base_link -> camera_frame`.
-- Keep `vocabulary_file` and `orbslam_backend_library` the same as in the default command; only TF-related arguments are added.
-
-```bash
-cd ORB_EKF
-source install/setup.bash
-ros2 launch orb_ekf orb_ekf.launch.py \
-  vocabulary_file:=/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/vendor/ORB_SLAM3/Vocabulary/ORBvoc.txt \
-  orbslam_backend_library:=/home/vikas-narang/RAS598_Assignments/RAS598_Mobile_Robotics/VO/ORB_EKF/orbslam3_backend.cpython-312-x86_64-linux-gnu.so \
-  use_static_camera_tf:=true \
-  camera_frame:=oakd_left_camera_optical_frame \
-  static_tf_x:=0.0 static_tf_y:=0.0 static_tf_z:=0.0 \
-  static_tf_qx:=0.0 static_tf_qy:=0.0 static_tf_qz:=0.0 static_tf_qw:=1.0
-```
+| Display type | Topic | Color suggestion |
+|---|---|---|
+| Path | `/orb_slam/vo_path` | Purple — VO trajectory |
+| Path | `/orb_ekf/average_path` | Green — averaged path |
+| Odometry | `/robot_10/odom` | White arrows — wheel odometry |

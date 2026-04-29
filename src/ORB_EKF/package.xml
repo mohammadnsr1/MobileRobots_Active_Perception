@@ -3,7 +3,7 @@
 <package format="3">
   <name>orb_ekf</name>
   <version>0.1.0</version>
-  <description>ORB-SLAM stereo VO + robot_localization EKF fusion package.</description>
+  <description>ORB-SLAM stereo VO with naïve average path fusion output.</description>
   <maintainer email="vikas@example.com">vikas</maintainer>
   <license>Apache-2.0</license>
 
@@ -19,8 +19,6 @@
   <depend>tf2_ros</depend>
   <depend>message_filters</depend>
   <depend>cv_bridge</depend>
-  <depend>robot_localization</depend>
-
   <!--
     ORB-SLAM backend is consumed as `orbslam3_backend` (Python module / .so library),
     loaded at runtime by orb_vo_node. It is not a standard ROS package dependency

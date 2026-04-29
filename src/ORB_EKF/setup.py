@@ -12,6 +12,7 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
         (f"share/{package_name}/config", glob("config/*.yaml")),
+        (f"lib/{package_name}", glob("orbslam3_backend*.so")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
