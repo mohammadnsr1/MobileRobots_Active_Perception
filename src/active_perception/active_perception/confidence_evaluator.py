@@ -24,9 +24,9 @@ class ConfidenceEvaluatorNode(Node):
         self.declare_parameter(
             'service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
-        self.declare_parameter('weight_position', 0.4)
-        self.declare_parameter('weight_yaw', 0.3)
-        self.declare_parameter('weight_point_count', 0.15)
+        self.declare_parameter('weight_position', 0.3)
+        self.declare_parameter('weight_yaw', 0.2)
+        self.declare_parameter('weight_point_count', 0.1)
         self.declare_parameter('weight_anisotropy', 0.15)
 
         self.service_name = (

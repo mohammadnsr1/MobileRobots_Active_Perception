@@ -40,7 +40,7 @@ class ActivePerceptionOrchestrator(Node):
         )
         self.declare_parameter('nbv_service_name', '/robot_10/active_perception/plan_nbv')
         self.declare_parameter('history_size', 20)
-        self.declare_parameter('desired_confidence_threshold', 0.75)
+        self.declare_parameter('desired_confidence_threshold', 0.97)
         self.declare_parameter('min_history_length', 10)
         self.declare_parameter('nbv_num_candidates', 8)
         self.declare_parameter('nbv_radius', 0.8)
