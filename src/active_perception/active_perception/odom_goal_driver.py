@@ -30,8 +30,8 @@ class OdomGoalDriver(Node):
     def __init__(self) -> None:
         super().__init__("odom_goal_driver")
 
-        self.declare_parameter("goal_topic", "/active_perception/nav_goal_odom")
-        self.declare_parameter("status_topic", "/active_perception/nav_status")
+        self.declare_parameter("goal_topic", "/robot_10/active_perception/nav_goal_odom")
+        self.declare_parameter("status_topic", "/robot_10/active_perception/nav_status")
         self.declare_parameter("expected_frame", "odom")
         self.declare_parameter("action_name", "navigate_to_pose")
         self.declare_parameter("cancel_previous_goal", True)

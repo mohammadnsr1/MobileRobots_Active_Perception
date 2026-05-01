@@ -10,6 +10,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from active_perception_interfaces.msg import PoseEstimateSample
 from active_perception_interfaces.srv import EvaluatePoseConfidence, PlanNBV
@@ -39,6 +40,8 @@ class ActivePerceptionOrchestrator(Node):
             'confidence_service_name', '/robot_10/active_perception/evaluate_pose_confidence'
         )
         self.declare_parameter('nbv_service_name', '/robot_10/active_perception/plan_nbv')
+        self.declare_parameter('nav_goal_topic', '/robot_10/active_perception/nav_goal_odom')
+        self.declare_parameter('nav_status_topic', '/robot_10/active_perception/nav_status')
         self.declare_parameter('history_size', 20)
         self.declare_parameter('desired_confidence_threshold', 0.97)
         self.declare_parameter('min_history_length', 10)
@@ -64,6 +67,12 @@ class ActivePerceptionOrchestrator(Node):
         )
         self.nbv_service_name = (
             self.get_parameter('nbv_service_name').get_parameter_value().string_value
+        )
+        self.nav_goal_topic = (
+            self.get_parameter('nav_goal_topic').get_parameter_value().string_value
+        )
+        self.nav_status_topic = (
+            self.get_parameter('nav_status_topic').get_parameter_value().string_value
         )
         self.history_size = (
             self.get_parameter('history_size').get_parameter_value().integer_value
@@ -105,6 +114,10 @@ class ActivePerceptionOrchestrator(Node):
         self.robot_pose_sub = self.create_subscription(
             Odometry, self.robot_pose_topic, self.robot_pose_callback, 10
         )
+        self.nav_status_sub = self.create_subscription(
+            String, self.nav_status_topic, self.nav_status_callback, 10
+        )
+        self.nav_goal_pub = self.create_publisher(PoseStamped, self.nav_goal_topic, 10)
 
         self.confidence_client = self.create_client(
             EvaluatePoseConfidence, self.confidence_service_name
@@ -121,11 +134,14 @@ class ActivePerceptionOrchestrator(Node):
         self.iteration_count = 0
 
         self.get_logger().info(
-            "Orchestrator ready: target_pose='%s', pose_sample='%s', robot_pose='%s'"
+            "Orchestrator ready: target_pose='%s', pose_sample='%s', robot_pose='%s', "
+            "nav_goal='%s', nav_status='%s'"
             % (
                 self.target_pose_topic,
                 self.pose_sample_topic,
                 self.robot_pose_topic,
+                self.nav_goal_topic,
+                self.nav_status_topic,
             )
         )
 
@@ -147,6 +163,29 @@ class ActivePerceptionOrchestrator(Node):
         pose.header = msg.header
         pose.pose = msg.pose.pose
         self.latest_robot_pose = pose
+
+    def nav_status_callback(self, msg: String) -> None:
+        if self.state != OrchestratorState.READY_TO_NAVIGATE:
+            return
+
+        status_text = msg.data.strip()
+        if status_text == 'Nav2 goal succeeded.':
+            self.state = OrchestratorState.WAITING_FOR_POSE
+            self.get_logger().info(
+                'Navigation finished successfully. Waiting for the next observation.'
+            )
+            return
+
+        if (
+            status_text == 'Nav2 rejected the goal.'
+            or status_text.startswith('Nav2 goal finished with status=')
+            or status_text.startswith('Error while waiting for Nav2 result:')
+            or status_text.startswith('Failed to send goal to Nav2:')
+        ):
+            self.state = OrchestratorState.WAITING_FOR_POSE
+            self.get_logger().warn(
+                'Navigation did not complete successfully: %s' % status_text
+            )
 
     def pose_sample_to_pose_stamped(self, sample: PoseEstimateSample) -> PoseStamped:
         pose = PoseStamped()
@@ -310,9 +349,10 @@ class ActivePerceptionOrchestrator(Node):
                 best_yaw,
             )
         )
+        self.nav_goal_pub.publish(copy.deepcopy(response.best_view))
         self.get_logger().info(
-            'TODO: send response.best_view to Nav2 here, wait for navigation to '
-            'finish, then return to WAITING_FOR_POSE for the next observation.'
+            "Published selected NBV to '%s' and waiting for navigation to finish."
+            % self.nav_goal_topic
         )
 
 
