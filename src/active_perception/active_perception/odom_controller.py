@@ -14,7 +14,7 @@ class OdomController(Node):
 
         self.declare_parameter("goal_topic", "/robot_10/active_perception/nav_goal_odom")
         self.declare_parameter("status_topic", "/robot_10/active_perception/nav_status")
-        self.declare_parameter("odom_topic", "/robot_10/odom")
+        self.declare_parameter("pose_feedback_topic", "/robot_10/odom")
         self.declare_parameter("cmd_vel_topic", "/robot_10/cmd_vel")
         self.declare_parameter("expected_frame", "odom")
         self.declare_parameter("control_rate_hz", 20.0)
@@ -30,7 +30,9 @@ class OdomController(Node):
 
         self.goal_topic = str(self.get_parameter("goal_topic").value)
         self.status_topic = str(self.get_parameter("status_topic").value)
-        self.odom_topic = str(self.get_parameter("odom_topic").value)
+        self.pose_feedback_topic = str(
+            self.get_parameter("pose_feedback_topic").value
+        )
         self.cmd_vel_topic = str(self.get_parameter("cmd_vel_topic").value)
         self.expected_frame = str(self.get_parameter("expected_frame").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
@@ -54,7 +56,7 @@ class OdomController(Node):
             PoseStamped, self.goal_topic, self.goal_callback, 10
         )
         self.odom_sub = self.create_subscription(
-            Odometry, self.odom_topic, self.odom_callback, 10
+            Odometry, self.pose_feedback_topic, self.odom_callback, 10
         )
         self.cmd_vel_pub = self.create_publisher(
             TwistStamped, self.cmd_vel_topic, 10
@@ -71,8 +73,14 @@ class OdomController(Node):
         self.control_timer = self.create_timer(timer_period, self.control_loop)
 
         self.publish_status(
-            "odom_controller ready. Listening on %s and publishing cmd_vel to %s."
-            % (self.goal_topic, self.cmd_vel_topic)
+            "odom_controller ready. goal_topic=%s pose_feedback_topic=%s "
+            "cmd_vel_topic=%s expected_frame=%s"
+            % (
+                self.goal_topic,
+                self.pose_feedback_topic,
+                self.cmd_vel_topic,
+                self.expected_frame,
+            )
         )
 
     def publish_status(self, text: str) -> None:
@@ -110,6 +118,12 @@ class OdomController(Node):
         return math.atan2(siny_cosp, cosy_cosp)
 
     def odom_callback(self, msg: Odometry) -> None:
+        frame_id = (msg.header.frame_id or "").strip()
+        if frame_id and frame_id != self.expected_frame:
+            self.get_logger().warn(
+                "Pose feedback frame_id='%s' does not match expected '%s'."
+                % (frame_id, self.expected_frame)
+            )
         self.latest_odom = msg
 
     def goal_callback(self, msg: PoseStamped) -> None:
