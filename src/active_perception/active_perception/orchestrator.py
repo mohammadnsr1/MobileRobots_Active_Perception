@@ -169,18 +169,18 @@ class ActivePerceptionOrchestrator(Node):
             return
 
         status_text = msg.data.strip()
-        if status_text == 'Nav2 goal succeeded.':
+        goal_rejected_prefix = 'Rejected goal because frame_id='
+        error_prefixes = ('Error', 'Failed')
+
+        if status_text == 'Odom goal reached.':
             self.state = OrchestratorState.WAITING_FOR_POSE
             self.get_logger().info(
                 'Navigation finished successfully. Waiting for the next observation.'
             )
             return
 
-        if (
-            status_text == 'Nav2 rejected the goal.'
-            or status_text.startswith('Nav2 goal finished with status=')
-            or status_text.startswith('Error while waiting for Nav2 result:')
-            or status_text.startswith('Failed to send goal to Nav2:')
+        if status_text.startswith(goal_rejected_prefix) or status_text.startswith(
+            error_prefixes
         ):
             self.state = OrchestratorState.WAITING_FOR_POSE
             self.get_logger().warn(
