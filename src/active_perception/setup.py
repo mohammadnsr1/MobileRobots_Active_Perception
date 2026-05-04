@@ -36,6 +36,7 @@ setup(
             'nbv_planner = active_perception.nbv_planner:main',
             'orchestrator = active_perception.orchestrator:main',
             'odom_goal_driver = active_perception.odom_goal_driver:main',
+            'odom_controller = active_perception.odom_controller:main',
         ],
     },
 )
