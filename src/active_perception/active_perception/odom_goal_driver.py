@@ -3,7 +3,7 @@ from typing import Optional
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, Quaternion
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Quaternion
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -36,6 +36,16 @@ class OdomGoalDriver(Node):
         self.declare_parameter("action_name", "navigate_to_pose")
         self.declare_parameter("cancel_previous_goal", True)
         self.declare_parameter("server_wait_timeout_sec", 3.0)
+        self.declare_parameter("initial_pose_topic", "/robot_10/initialpose")
+        self.declare_parameter("publish_initial_pose_on_startup", True)
+        self.declare_parameter("initial_pose_frame", "map")
+        self.declare_parameter("initial_pose_x", 0.0)
+        self.declare_parameter("initial_pose_y", 0.0)
+        self.declare_parameter("initial_pose_yaw", 0.0)
+        self.declare_parameter("initial_pose_covariance_x", 0.25)
+        self.declare_parameter("initial_pose_covariance_y", 0.25)
+        self.declare_parameter("initial_pose_covariance_yaw", 0.068)
+        self.declare_parameter("initial_pose_publish_delay_sec", 1.0)
 
         self.goal_topic = str(self.get_parameter("goal_topic").value)
         self.status_topic = str(self.get_parameter("status_topic").value)
@@ -47,20 +57,50 @@ class OdomGoalDriver(Node):
         self.server_wait_timeout_sec = float(
             self.get_parameter("server_wait_timeout_sec").value
         )
+        self.initial_pose_topic = str(self.get_parameter("initial_pose_topic").value)
+        self.publish_initial_pose_on_startup = bool(
+            self.get_parameter("publish_initial_pose_on_startup").value
+        )
+        self.initial_pose_frame = str(self.get_parameter("initial_pose_frame").value)
+        self.initial_pose_x = float(self.get_parameter("initial_pose_x").value)
+        self.initial_pose_y = float(self.get_parameter("initial_pose_y").value)
+        self.initial_pose_yaw = float(self.get_parameter("initial_pose_yaw").value)
+        self.initial_pose_covariance_x = float(
+            self.get_parameter("initial_pose_covariance_x").value
+        )
+        self.initial_pose_covariance_y = float(
+            self.get_parameter("initial_pose_covariance_y").value
+        )
+        self.initial_pose_covariance_yaw = float(
+            self.get_parameter("initial_pose_covariance_yaw").value
+        )
+        self.initial_pose_publish_delay_sec = float(
+            self.get_parameter("initial_pose_publish_delay_sec").value
+        )
 
         self.goal_sub = self.create_subscription(
             PoseStamped, self.goal_topic, self.goal_callback, 10
         )
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
+        self.initial_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, self.initial_pose_topic, 10
+        )
         self.nav_client = ActionClient(self, NavigateToPose, self.action_name)
 
         self.current_goal_handle = None
         self.pending_goal: Optional[PoseStamped] = None
         self.navigation_in_progress = False
+        self.initial_pose_timer = None
 
         self.publish_status(
             f"odom_goal_driver ready. Listening on {self.goal_topic} and forwarding to {self.action_name}."
         )
+
+        if self.publish_initial_pose_on_startup:
+            self.initial_pose_timer = self.create_timer(
+                max(self.initial_pose_publish_delay_sec, 0.0),
+                self.publish_initial_pose_once,
+            )
 
     def publish_status(self, text: str) -> None:
         msg = String()
@@ -81,6 +121,41 @@ class OdomGoalDriver(Node):
         q.z /= norm
         q.w /= norm
         return q
+
+    def yaw_to_quaternion(self, yaw: float) -> Quaternion:
+        q = Quaternion()
+        q.z = math.sin(yaw / 2.0)
+        q.w = math.cos(yaw / 2.0)
+        return q
+
+    def publish_initial_pose_once(self) -> None:
+        if self.initial_pose_timer is not None:
+            self.initial_pose_timer.cancel()
+            self.initial_pose_timer = None
+
+        initial_pose = PoseWithCovarianceStamped()
+        initial_pose.header.stamp = self.get_clock().now().to_msg()
+        initial_pose.header.frame_id = self.initial_pose_frame
+        initial_pose.pose.pose.position.x = self.initial_pose_x
+        initial_pose.pose.pose.position.y = self.initial_pose_y
+        initial_pose.pose.pose.orientation = self.yaw_to_quaternion(
+            self.initial_pose_yaw
+        )
+        initial_pose.pose.covariance[0] = self.initial_pose_covariance_x
+        initial_pose.pose.covariance[7] = self.initial_pose_covariance_y
+        initial_pose.pose.covariance[35] = self.initial_pose_covariance_yaw
+
+        self.initial_pose_pub.publish(initial_pose)
+        self.publish_status(
+            "Published initial pose to %s: frame=%s x=%.3f y=%.3f yaw=%.3f"
+            % (
+                self.initial_pose_topic,
+                self.initial_pose_frame,
+                self.initial_pose_x,
+                self.initial_pose_y,
+                self.initial_pose_yaw,
+            )
+        )
 
     def goal_callback(self, msg: PoseStamped) -> None:
         frame_id = (msg.header.frame_id or "").strip()
