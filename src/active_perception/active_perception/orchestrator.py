@@ -351,7 +351,7 @@ class ActivePerceptionOrchestrator(Node):
         )
         self.nav_goal_pub.publish(copy.deepcopy(response.best_view))
         self.get_logger().info(
-            "Published selected NBV to '%s' and waiting for navigation to finish."
+            "Published selected NBV to '%s' and waiting for the navigation executor to finish."
             % self.nav_goal_topic
         )
 
