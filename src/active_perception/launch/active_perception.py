@@ -50,6 +50,12 @@ def generate_launch_description() -> LaunchDescription:
             ),
             Node(
                 package="active_perception",
+                executable="odom_controller",
+                name="odom_controller",
+                output="screen",
+            ),
+            Node(
+                package="active_perception",
                 executable="confidence_evaluator",
                 name="confidence_evaluator",
                 output="screen",
